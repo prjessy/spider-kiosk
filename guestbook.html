@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>포토 방명록</title>
+<script src="qrcode.min.js"></script>
+<script>
+  // 로컬 qrcode.min.js가 없으면 CDN에서 로드
+  if (typeof qrcode === 'undefined') {
+    document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"><\/script>');
+  }
+</script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #16161d;
+    color: #eee;
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .screen {
+    position: absolute; inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+  }
+  .screen.active { display: flex; }
+
+  h1 { font-size: 42px; letter-spacing: 0.08em; }
+  .sub { color: #9aa; font-size: 16px; }
+
+  .bigbtn {
+    background: linear-gradient(135deg, #5b8def, #7c5bef);
+    border: none; color: #fff;
+    font-size: 24px; font-family: inherit;
+    padding: 20px 64px;
+    border-radius: 999px;
+    cursor: pointer;
+    box-shadow: 0 6px 24px rgba(91, 141, 239, 0.4);
+    transition: transform 0.1s;
+  }
+  .bigbtn:active { transform: scale(0.96); }
+
+  button.ctrl {
+    background: #2e2e3a;
+    border: 1px solid #4a4a5a;
+    color: #eee;
+    font-size: 17px; font-family: inherit;
+    padding: 13px 28px;
+    border-radius: 12px;
+    cursor: pointer;
+  }
+  button.ctrl:active { background: #44445a; }
+  button.ctrl.primary { background: #5b8def; border-color: #5b8def; }
+
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+
+  /* ── 시작 화면: 최근 방명록 ── */
+  #recentWrap { max-width: 900px; }
+  #recentWrap h3 { font-size: 14px; color: #889; font-weight: normal; margin-bottom: 10px; text-align: center; }
+  #recent {
+    display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;
+  }
+  #recent img {
+    width: 130px; border-radius: 8px;
+    border: 1px solid #333;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+
+  /* ── 카메라 화면 ── */
+  #camWrap { position: relative; }
+  video, #photoWrap canvas {
+    width: min(86vw, calc(72vh * 16 / 9));
+    aspect-ratio: 16 / 9;
+    border-radius: 14px;
+    background: #000;
+    display: block;
+  }
+  video { transform: scaleX(-1); object-fit: cover; }
+
+  #countdown {
+    position: absolute; inset: 0;
+    display: none;
+    align-items: center; justify-content: center;
+    font-size: 160px; font-weight: bold;
+    color: #fff;
+    text-shadow: 0 0 40px rgba(0,0,0,0.8);
+  }
+
+  #flash {
+    position: fixed; inset: 0;
+    background: #fff;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 1000;
+    transition: opacity 0.4s;
+  }
+
+  /* ── 꾸미기 화면 ── */
+  #photoWrap { position: relative; }
+  #photoWrap canvas { position: absolute; top: 0; left: 0; height: 100%; }
+  #photoWrap canvas:first-child { position: relative; }
+  #doodleCanvas { cursor: crosshair; touch-action: none; }
+
+  .penbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; font-size: 14px; }
+  .swatch {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    cursor: pointer;
+  }
+  .swatch.sel { border-color: #5b8def; }
+  input[type="range"] { width: 110px; accent-color: #8ab4f8; }
+
+  /* ── 전송 화면 ── */
+  #qrBox {
+    background: #fff;
+    padding: 22px;
+    border-radius: 18px;
+    display: none;
+  }
+  #qrBox img { display: block; width: 300px; height: 300px; image-rendering: pixelated; }
+  #spinner {
+    width: 56px; height: 56px;
+    border: 5px solid #333;
+    border-top-color: #5b8def;
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #sendMsg { font-size: 20px; text-align: center; line-height: 1.6; }
+  #sendMsg small { color: #889; font-size: 14px; }
+  #urlText { font-size: 12px; color: #667; word-break: break-all; max-width: 70vw; text-align: center; }
+</style>
+</head>
+<body>
+
+<!-- ═══ 1. 시작 화면 ═══ -->
+<div class="screen active" id="scrStart">
+  <h1>📸 포토 방명록</h1>
+  <p class="sub">사진을 찍고 거미줄 펜으로 메시지를 남겨 보세요 · 사진은 핸드폰으로 가져갈 수 있어요</p>
+  <button class="bigbtn" id="btnStart">터치하여 시작</button>
+  <a href="index.html" style="color:#667; font-size:13px; text-decoration:none">⌂ 메뉴로 돌아가기</a>
+  <div id="recentWrap" style="display:none">
+    <h3>― 최근 방명록 ―</h3>
+    <div id="recent"></div>
+  </div>
+</div>
+
+<!-- ═══ 2. 카메라 화면 ═══ -->
+<div class="screen" id="scrCamera">
+  <div id="camWrap">
+    <video id="video" autoplay playsinline muted></video>
+    <div id="countdown"></div>
+  </div>
+  <div class="row">
+    <button class="ctrl" id="btnCamBack">← 처음으로</button>
+    <button class="ctrl primary" id="btnShoot" style="font-size:22px; padding:16px 56px">📷 촬영 (3초)</button>
+  </div>
+  <p class="sub" id="camError" style="color:#e88; display:none"></p>
+</div>
+
+<!-- ═══ 3. 꾸미기 화면 ═══ -->
+<div class="screen" id="scrDecorate">
+  <div id="photoWrap">
+    <canvas id="photoCanvas"></canvas>
+    <canvas id="doodleCanvas"></canvas>
+  </div>
+  <div class="penbar">
+    <span>거미줄 펜:</span>
+    <div class="swatch sel" data-c="#ffffff" style="background:#fff"></div>
+    <div class="swatch" data-c="#000000" style="background:#000"></div>
+    <div class="swatch" data-c="#ffd400" style="background:#ffd400"></div>
+    <div class="swatch" data-c="#ff5b7f" style="background:#ff5b7f"></div>
+    <div class="swatch" data-c="#5bff8d" style="background:#5bff8d"></div>
+    <label>굵기 <input type="range" id="penW" min="0.5" max="6" step="0.5" value="2"></label>
+    <button class="ctrl" id="btnDoodleUndo">↶ 취소</button>
+    <button class="ctrl" id="btnDoodleClear">전체 지우기</button>
+  </div>
+  <div class="row">
+    <button class="ctrl" id="btnRetake">↺ 다시 찍기</button>
+    <button class="ctrl primary" id="btnSend" style="font-size:20px; padding:15px 48px">📱 핸드폰으로 보내기</button>
+  </div>
+</div>
+
+<!-- ═══ 4. 전송/QR 화면 ═══ -->
+<div class="screen" id="scrSend">
+  <div id="spinner"></div>
+  <div id="qrBox"><img id="qrImg" alt="QR"></div>
+  <div id="sendMsg">업로드 중...</div>
+  <div id="urlText"></div>
+  <div class="row">
+    <button class="ctrl" id="btnLocalSave">💾 PC에 저장</button>
+    <button class="ctrl primary" id="btnDone">✓ 처음으로</button>
+  </div>
+</div>
+
+<div id="flash"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  const UPLOAD_API = 'https://tmpfiles.org/api/v1/upload';
+  const PHOTO_W = 1280, PHOTO_H = 720;
+
+  const $ = id => document.getElementById(id);
+  const screens = ['scrStart', 'scrCamera', 'scrDecorate', 'scrSend'];
+  function show(id) {
+    screens.forEach(s => $(s).classList.toggle('active', s === id));
+  }
+
+  let stream = null;
+  let resetTimer = null;
+
+  // ─────────────────────────────────────────────────────────
+  // 시작 화면: 최근 방명록 (localStorage 썸네일)
+  // ─────────────────────────────────────────────────────────
+  function loadRecent() {
+    let entries = [];
+    try { entries = JSON.parse(localStorage.getItem('guestbook_entries') || '[]'); } catch (e) {}
+    const wrap = $('recentWrap'), box = $('recent');
+    box.innerHTML = '';
+    if (!entries.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    entries.slice(-12).reverse().forEach(en => {
+      const img = new Image();
+      img.src = en.d;
+      img.title = en.t;
+      box.appendChild(img);
+    });
+  }
+  function saveRecent(canvas) {
+    const th = document.createElement('canvas');
+    th.width = 220; th.height = Math.round(220 * PHOTO_H / PHOTO_W);
+    th.getContext('2d').drawImage(canvas, 0, 0, th.width, th.height);
+    let entries = [];
+    try { entries = JSON.parse(localStorage.getItem('guestbook_entries') || '[]'); } catch (e) {}
+    entries.push({ t: new Date().toLocaleString('ko-KR'), d: th.toDataURL('image/jpeg', 0.75) });
+    while (entries.length > 12) entries.shift();
+    try { localStorage.setItem('guestbook_entries', JSON.stringify(entries)); } catch (e) {}
+  }
+  loadRecent();
+
+  // ─────────────────────────────────────────────────────────
+  // 카메라
+  // ─────────────────────────────────────────────────────────
+  const video = $('video');
+
+  async function startCamera() {
+    show('scrCamera');
+    $('camError').style.display = 'none';
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: PHOTO_W }, height: { ideal: PHOTO_H }, facingMode: 'user' },
+        audio: false
+      });
+      video.srcObject = stream;
+    } catch (err) {
+      const e = $('camError');
+      e.style.display = 'block';
+      e.textContent = '카메라를 사용할 수 없습니다: ' + err.message +
+        ' (브라우저 카메라 권한을 허용했는지, 다른 프로그램이 웹캠을 쓰고 있지 않은지 확인하세요)';
+    }
+  }
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    video.srcObject = null;
+  }
+
+  // 촬영: 3초 카운트다운 → 캡처
+  let shooting = false;
+  async function shoot() {
+    if (shooting || !stream) return;
+    shooting = true;
+    const cd = $('countdown');
+    cd.style.display = 'flex';
+    for (let n = 3; n >= 1; n--) {
+      cd.textContent = n;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    cd.style.display = 'none';
+    shooting = false;
+
+    // 플래시 효과
+    const flash = $('flash');
+    flash.style.transition = 'none';
+    flash.style.opacity = '0.9';
+    requestAnimationFrame(() => {
+      flash.style.transition = 'opacity 0.5s';
+      flash.style.opacity = '0';
+    });
+
+    capture();
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 캡처 & 꾸미기 (거미줄 펜)
+  // ─────────────────────────────────────────────────────────
+  const photoCanvas = $('photoCanvas');
+  const doodleCanvas = $('doodleCanvas');
+  const pctx = photoCanvas.getContext('2d');
+  const dctx = doodleCanvas.getContext('2d', { willReadFrequently: true });
+  photoCanvas.width = doodleCanvas.width = PHOTO_W;
+  photoCanvas.height = doodleCanvas.height = PHOTO_H;
+
+  function capture() {
+    // 미리보기와 같게 좌우 반전 캡처
+    pctx.save();
+    pctx.translate(PHOTO_W, 0);
+    pctx.scale(-1, 1);
+    // cover 방식으로 비율 맞추기
+    const vw = video.videoWidth || PHOTO_W, vh = video.videoHeight || PHOTO_H;
+    const s = Math.max(PHOTO_W / vw, PHOTO_H / vh);
+    const dw = vw * s, dh = vh * s;
+    pctx.drawImage(video, (PHOTO_W - dw) / 2, (PHOTO_H - dh) / 2, dw, dh);
+    pctx.restore();
+
+    // 날짜 스탬프
+    pctx.save();
+    pctx.font = '22px "Malgun Gothic", sans-serif';
+    pctx.textAlign = 'right';
+    pctx.shadowColor = 'rgba(0,0,0,0.7)';
+    pctx.shadowBlur = 6;
+    pctx.fillStyle = 'rgba(255,255,255,0.92)';
+    pctx.fillText('방명록 · ' + new Date().toLocaleString('ko-KR', {
+      year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
+    }), PHOTO_W - 24, PHOTO_H - 22);
+    pctx.restore();
+
+    dctx.clearRect(0, 0, PHOTO_W, PHOTO_H);
+    doodleUndoStack.length = 0;
+    stopCamera();
+    show('scrDecorate');
+  }
+
+  // ── 거미줄 펜 (낙서장과 동일한 알고리즘, 낙서 레이어에만 반응) ──
+  const pen = { color: '#ffffff', width: 2, radius: 150, rays: 25 };
+  let drawing = false, ox = 0, oy = 0;
+  const doodleUndoStack = [];
+
+  function drawStar(mx, my) {
+    const r = pen.radius;
+    const bx = Math.max(0, Math.floor(mx - r));
+    const by = Math.max(0, Math.floor(my - r));
+    const bw = Math.min(PHOTO_W, Math.ceil(mx + r)) - bx;
+    const bh = Math.min(PHOTO_H, Math.ceil(my + r)) - by;
+    if (bw <= 0 || bh <= 0) return;
+    const data = dctx.getImageData(bx, by, bw, bh).data;
+
+    dctx.save();
+    dctx.globalAlpha = 0.25;
+    dctx.strokeStyle = pen.color;
+    dctx.lineWidth = Math.max(0.3, pen.width * 0.25); // 보조선은 항상 얇게
+    dctx.beginPath();
+    for (let i = 0; i < pen.rays; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const dx = Math.cos(a), dy = Math.sin(a);
+      let px = mx, py = my, hx = 0, hy = 0, hit = false;
+      for (let d = 0; d < r; d++) {
+        px += dx; py += dy;
+        const ix = Math.round(px) - bx, iy = Math.round(py) - by;
+        if (ix >= 0 && iy >= 0 && ix < bw && iy < bh && data[(iy * bw + ix) * 4 + 3] > 0) {
+          hx = px; hy = py; hit = true;
+        }
+      }
+      if (hit) { dctx.moveTo(mx, my); dctx.lineTo(hx, hy); }
+    }
+    dctx.stroke();
+    dctx.restore();
+  }
+  function drawLine(x1, y1, x2, y2) {
+    dctx.save();
+    dctx.globalAlpha = 0.9;
+    dctx.strokeStyle = pen.color;
+    dctx.lineWidth = pen.width;
+    dctx.lineCap = 'round';
+    dctx.beginPath();
+    dctx.moveTo(x1, y1);
+    dctx.lineTo(x2, y2);
+    dctx.stroke();
+    dctx.restore();
+  }
+
+  function dpos(e) {
+    const r = doodleCanvas.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: (t.clientX - r.left) * PHOTO_W / r.width, y: (t.clientY - r.top) * PHOTO_H / r.height };
+  }
+  function dDown(e) {
+    const p = dpos(e);
+    doodleUndoStack.push(dctx.getImageData(0, 0, PHOTO_W, PHOTO_H));
+    if (doodleUndoStack.length > 20) doodleUndoStack.shift();
+    drawing = true; ox = p.x; oy = p.y;
+    drawStar(p.x, p.y);
+  }
+  function dMove(e) {
+    if (!drawing) return;
+    const p = dpos(e);
+    drawStar(p.x, p.y);
+    drawLine(ox, oy, p.x, p.y);
+    ox = p.x; oy = p.y;
+  }
+  doodleCanvas.addEventListener('mousedown', dDown);
+  doodleCanvas.addEventListener('mousemove', dMove);
+  window.addEventListener('mouseup', () => { drawing = false; });
+  doodleCanvas.addEventListener('touchstart', e => { e.preventDefault(); dDown(e); }, { passive: false });
+  doodleCanvas.addEventListener('touchmove',  e => { e.preventDefault(); dMove(e); }, { passive: false });
+  doodleCanvas.addEventListener('touchend',   e => { e.preventDefault(); drawing = false; }, { passive: false });
+
+  document.querySelectorAll('.swatch').forEach(s => {
+    s.addEventListener('click', () => {
+      document.querySelectorAll('.swatch').forEach(x => x.classList.remove('sel'));
+      s.classList.add('sel');
+      pen.color = s.dataset.c;
+    });
+  });
+  $('penW').addEventListener('input', e => { pen.width = +e.target.value; });
+  $('btnDoodleUndo').addEventListener('click', () => {
+    if (doodleUndoStack.length) dctx.putImageData(doodleUndoStack.pop(), 0, 0);
+  });
+  $('btnDoodleClear').addEventListener('click', () => {
+    doodleUndoStack.push(dctx.getImageData(0, 0, PHOTO_W, PHOTO_H));
+    dctx.clearRect(0, 0, PHOTO_W, PHOTO_H);
+  });
+
+  // ─────────────────────────────────────────────────────────
+  // 합성 → 업로드 → QR
+  // ─────────────────────────────────────────────────────────
+  let lastComposite = null;
+
+  function composite() {
+    const out = document.createElement('canvas');
+    out.width = PHOTO_W; out.height = PHOTO_H;
+    const c = out.getContext('2d');
+    c.drawImage(photoCanvas, 0, 0);
+    c.drawImage(doodleCanvas, 0, 0);
+    return out;
+  }
+
+  async function send() {
+    const out = composite();
+    lastComposite = out;
+    saveRecent(out);
+
+    show('scrSend');
+    $('spinner').style.display = 'block';
+    $('qrBox').style.display = 'none';
+    $('sendMsg').innerHTML = '업로드 중...';
+    $('urlText').textContent = '';
+
+    try {
+      const blob = await new Promise(r => out.toBlob(r, 'image/jpeg', 0.92));
+      const fd = new FormData();
+      const pad = n => String(n).padStart(2, '0');
+      const t = new Date();
+      fd.append('file', blob, `guestbook_${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}_${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}.jpg`);
+
+      const res = await fetch(UPLOAD_API, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      if (json.status !== 'success') throw new Error(json.message || '업로드 실패');
+
+      // 보기 페이지 → 직접 다운로드 링크로 변환
+      const dlUrl = json.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+
+      // QR 생성
+      const qr = qrcode(0, 'M');
+      qr.addData(dlUrl);
+      qr.make();
+      $('qrImg').src = qr.createDataURL(8, 8);
+      $('spinner').style.display = 'none';
+      $('qrBox').style.display = 'block';
+      $('sendMsg').innerHTML = '📱 핸드폰 카메라로 QR을 스캔하세요<br><small>링크는 60분 동안 유효합니다 · 스캔 후 사진을 길게 눌러 저장</small>';
+      $('urlText').textContent = dlUrl;
+    } catch (err) {
+      $('spinner').style.display = 'none';
+      $('sendMsg').innerHTML = '⚠ 업로드에 실패했습니다 (' + err.message + ')<br><small>인터넷 연결을 확인하거나, 아래 "PC에 저장"을 이용하세요</small>';
+    }
+
+    // 90초 후 자동으로 처음 화면으로
+    clearTimeout(resetTimer);
+    resetTimer = setTimeout(goHome, 90000);
+  }
+
+  function localSave() {
+    if (!lastComposite) return;
+    const a = document.createElement('a');
+    a.download = 'guestbook.jpg';
+    a.href = lastComposite.toDataURL('image/jpeg', 0.92);
+    a.click();
+  }
+
+  function goHome() {
+    clearTimeout(resetTimer);
+    stopCamera();
+    loadRecent();
+    show('scrStart');
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 버튼 연결
+  // ─────────────────────────────────────────────────────────
+  $('btnStart').addEventListener('click', startCamera);
+  $('btnCamBack').addEventListener('click', goHome);
+  $('btnShoot').addEventListener('click', shoot);
+  $('btnRetake').addEventListener('click', startCamera);
+  $('btnSend').addEventListener('click', send);
+  $('btnLocalSave').addEventListener('click', localSave);
+  $('btnDone').addEventListener('click', goHome);
+
+})();
+</script>
+</body>
+</html>

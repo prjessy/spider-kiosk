@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>거미줄 키오스크</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #16161d;
+    color: #eee;
+    font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 40px;
+    user-select: none;
+  }
+
+  h1 { font-size: 40px; letter-spacing: 0.1em; }
+  .sub { color: #9aa; font-size: 15px; }
+
+  .cards { display: flex; gap: 28px; flex-wrap: wrap; justify-content: center; padding: 0 20px; }
+
+  a.card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    width: min(340px, 84vw);
+    height: 230px;
+    border-radius: 22px;
+    text-decoration: none;
+    color: #fff;
+    font-size: 26px;
+    font-weight: bold;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+    transition: transform 0.12s;
+  }
+  a.card:active { transform: scale(0.97); }
+  a.card .icon { font-size: 58px; }
+  a.card .desc { font-size: 13px; font-weight: normal; opacity: 0.85; }
+
+  .doodle { background: linear-gradient(145deg, #3a3a46, #22222b); border: 1px solid #4a4a5a; }
+  .guest  { background: linear-gradient(135deg, #5b8def, #7c5bef); }
+
+  footer { color: #556; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>🕸 거미줄 키오스크</h1>
+  <p class="sub">원하는 메뉴를 선택하세요</p>
+  <div class="cards">
+    <a class="card doodle" href="doodle.html">
+      <span class="icon">🕸</span>
+      거미줄 낙서장
+      <span class="desc">드래그하면 거미줄 모양 낙서가 그려져요</span>
+    </a>
+    <a class="card guest" href="guestbook.html">
+      <span class="icon">📸</span>
+      포토 방명록
+      <span class="desc">사진 찍고 QR로 핸드폰에 바로 전송</span>
+    </a>
+  </div>
+  <footer>spider-kiosk</footer>
+</body>
+</html>
