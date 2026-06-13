@@ -7,7 +7,7 @@
 | `index.html` | 메인 메뉴 |
 | `doodle.html` | 거미줄 낙서장 (모바일/키오스크 겸용) |
 | `guestbook.html` | 포토 방명록 — 촬영 → 거미줄 펜 꾸미기 → QR 전송 |
-| `admin.html` | 방명록 기록 관리 (비밀번호 기본값 `0000`, 파일 상단 `ADMIN_PIN`에서 변경) |
+| `admin.html` | 방명록 기록 관리 (비밀번호는 파일 상단 `ADMIN_PIN`에서 설정) |
 
 ## 기록 저장 방식
 
