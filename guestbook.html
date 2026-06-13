@@ -11,6 +11,11 @@
     document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"><\/script>');
   }
 </script>
+<!-- Firebase (firebase-config.js 설정 시에만 동작, 오프라인이어도 무방) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="guestbook-store.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -148,7 +153,10 @@
   <h1>📸 포토 방명록</h1>
   <p class="sub">사진을 찍고 거미줄 펜으로 메시지를 남겨 보세요 · 사진은 핸드폰으로 가져갈 수 있어요</p>
   <button class="bigbtn" id="btnStart">터치하여 시작</button>
-  <a href="index.html" style="color:#667; font-size:13px; text-decoration:none">⌂ 메뉴로 돌아가기</a>
+  <div class="row" style="gap:24px">
+    <a href="index.html" style="color:#667; font-size:13px; text-decoration:none">⌂ 메뉴로 돌아가기</a>
+    <a href="admin.html" style="color:#445; font-size:13px; text-decoration:none">⚙ 기록 관리</a>
+  </div>
   <div id="recentWrap" style="display:none">
     <h3>― 최근 방명록 ―</h3>
     <div id="recent"></div>
@@ -222,33 +230,35 @@
   let resetTimer = null;
 
   // ─────────────────────────────────────────────────────────
-  // 시작 화면: 최근 방명록 (localStorage 썸네일)
+  // 시작 화면: 최근 방명록 (IndexedDB 원본 저장 + Firebase 동기화)
+  // 모든 기록은 admin.html(기록 관리)에서 보관·관리됨
   // ─────────────────────────────────────────────────────────
-  function loadRecent() {
+  async function loadRecent() {
     let entries = [];
-    try { entries = JSON.parse(localStorage.getItem('guestbook_entries') || '[]'); } catch (e) {}
+    try { entries = await GuestbookStore.list(); } catch (e) {}
     const wrap = $('recentWrap'), box = $('recent');
     box.innerHTML = '';
     if (!entries.length) { wrap.style.display = 'none'; return; }
     wrap.style.display = 'block';
-    entries.slice(-12).reverse().forEach(en => {
+    entries.slice(0, 12).forEach(en => {
       const img = new Image();
-      img.src = en.d;
-      img.title = en.t;
+      img.src = en.th || en.d;
+      img.title = en.label || new Date(en.t).toLocaleString('ko-KR');
       box.appendChild(img);
     });
   }
-  function saveRecent(canvas) {
+  function makeThumb(canvas) {
     const th = document.createElement('canvas');
     th.width = 220; th.height = Math.round(220 * PHOTO_H / PHOTO_W);
     th.getContext('2d').drawImage(canvas, 0, 0, th.width, th.height);
-    let entries = [];
-    try { entries = JSON.parse(localStorage.getItem('guestbook_entries') || '[]'); } catch (e) {}
-    entries.push({ t: new Date().toLocaleString('ko-KR'), d: th.toDataURL('image/jpeg', 0.75) });
-    while (entries.length > 12) entries.shift();
-    try { localStorage.setItem('guestbook_entries', JSON.stringify(entries)); } catch (e) {}
+    return th.toDataURL('image/jpeg', 0.75);
   }
-  loadRecent();
+  // 구버전 localStorage 기록 이전 → 원격 동기화 → 목록 표시
+  (async () => {
+    try { await GuestbookStore.migrateLegacy(); } catch (e) {}
+    loadRecent();
+    try { await GuestbookStore.syncAll(); loadRecent(); } catch (e) {}
+  })();
 
   // ─────────────────────────────────────────────────────────
   // 카메라
@@ -340,6 +350,15 @@
     doodleUndoStack.length = 0;
     stopCamera();
     show('scrDecorate');
+
+    // 촬영 즉시 기록 저장 (보내기 전에 이탈해도 기록이 남음)
+    currentEntryId = GuestbookStore.newId();
+    GuestbookStore.add({
+      id: currentEntryId,
+      t: new Date().toISOString(),
+      d: photoCanvas.toDataURL('image/jpeg', 0.85),
+      th: makeThumb(photoCanvas)
+    });
   }
 
   // ── 거미줄 펜 (낙서장과 동일한 알고리즘, 낙서 레이어에만 반응) ──
@@ -436,6 +455,7 @@
   // 합성 → 업로드 → QR
   // ─────────────────────────────────────────────────────────
   let lastComposite = null;
+  let currentEntryId = null;
 
   function composite() {
     const out = document.createElement('canvas');
@@ -449,7 +469,13 @@
   async function send() {
     const out = composite();
     lastComposite = out;
-    saveRecent(out);
+    // 촬영 시 저장한 기록을 꾸민(낙서 포함) 최종본으로 갱신
+    if (currentEntryId) {
+      GuestbookStore.update(currentEntryId, {
+        d: out.toDataURL('image/jpeg', 0.85),
+        th: makeThumb(out)
+      });
+    }
 
     show('scrSend');
     $('spinner').style.display = 'block';

@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <title>거미줄 낙서장</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -14,6 +14,11 @@
     font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
     user-select: none;
     -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  /* 모바일: 주소창에 따라 변하는 실제 표시 영역 기준 */
+  @supports (height: 100dvh) {
+    html, body { height: 100dvh; }
   }
 
   #stage {
@@ -122,6 +127,21 @@
   }
 
   input[type="file"] { display: none; }
+
+  /* 좁은 화면(핸드폰): 툴바를 한 줄 가로 스크롤로 — 캔버스 전체보기 확보 */
+  @media (max-width: 760px) {
+    #toolbar {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    #toolbar::-webkit-scrollbar { display: none; }
+    .group { flex: 0 0 auto; }
+    .group:last-child { margin-left: 0; }
+    input[type="range"] { width: 56px; }
+    #cursor { display: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -437,9 +457,20 @@
   $('btnClose').addEventListener('click', closeApp);
   $('btnUndo').addEventListener('click', undo);
   $('btnRedo').addEventListener('click', redo);
+  // 전체화면: 표준 + webkit(구형 안드로이드/사파리) 폴백,
+  // 둘 다 없는 iOS 사파리에서는 툴바를 숨겨 유사 전체화면으로 동작
+  const docEl = document.documentElement;
+  const fsRequest = docEl.requestFullscreen || docEl.webkitRequestFullscreen;
+  const fsExit = document.exitFullscreen || document.webkitExitFullscreen;
+  const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
   $('btnFull').addEventListener('click', () => {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else document.documentElement.requestFullscreen();
+    if (!fsRequest) { // iOS 등 미지원 브라우저
+      toolbar.classList.toggle('hidden');
+      fit();
+      return;
+    }
+    if (fsElement()) fsExit.call(document);
+    else fsRequest.call(docEl);
   });
   $('btnHide').addEventListener('click', () => toolbar.classList.add('hidden'));
   $('showTab').addEventListener('click', () => toolbar.classList.remove('hidden'));
@@ -456,16 +487,21 @@
   });
 
   // ── 화면 맞춤 (비율 유지) ─────────────────────────────────
+  // 모바일은 주소창 때문에 innerHeight가 실제 표시 영역과 다를 수 있어
+  // visualViewport 기준으로 계산 → 캔버스가 잘리지 않고 전체가 보임
   function fit() {
+    const vv = window.visualViewport;
     const tbH = toolbar.classList.contains('hidden') ? 0 : toolbar.offsetHeight;
-    const availW = window.innerWidth;
-    const availH = window.innerHeight - tbH;
+    const availW = vv ? vv.width : window.innerWidth;
+    const availH = (vv ? vv.height : window.innerHeight) - tbH;
     const s = Math.min(availW / W, availH / H);
     canvas.style.width = (W * s) + 'px';
     canvas.style.height = (H * s) + 'px';
     document.getElementById('stage').style.top = tbH + 'px';
   }
   window.addEventListener('resize', fit);
+  window.addEventListener('orientationchange', () => setTimeout(fit, 250));
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', fit);
   new ResizeObserver(fit).observe(toolbar);
   fit();
   updateHistoryButtons();
