@@ -84,25 +84,55 @@
     width: 130px; border-radius: 8px;
     border: 1px solid #333;
     box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    display: block;
   }
+  .recent-cell { position: relative; display: inline-block; }
+  .recent-del {
+    position: absolute; top: -8px; right: -8px;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: #c0392b; color: #fff;
+    border: 2px solid #16161d;
+    font-size: 14px; line-height: 1;
+    padding: 0; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  }
+  .recent-del:active { background: #e05548; }
 
   /* ── 카메라 화면 ── */
   #camWrap { position: relative; }
   video, #photoWrap canvas {
-    width: min(86vw, calc(72vh * 16 / 9));
     aspect-ratio: 16 / 9;
     border-radius: 14px;
     background: #000;
     display: block;
   }
-  video { transform: scaleX(-1); object-fit: cover; }
+  /* 카메라 미리보기: 핸드폰에서 화면을 꽉 차게(풀사이즈)로 크게 표시 */
+  video { width: min(96vw, calc(82vh * 16 / 9)); transform: scaleX(-1); object-fit: cover; }
+  /* 꾸미기 사진: 위쪽 보내기 버튼 + 꾸미기 도구가 들어갈 자리를 위해 조금 작게 */
+  #photoWrap canvas { width: min(82vw, calc(56vh * 16 / 9)); }
 
-  /* 낮은 화면(가로 모드 폰 등)에서는 사진을 줄여 도구막대가 스크롤 없이 다 보이게 */
+  /* 핸드폰(좁은 화면): 카메라 미리보기를 폭 가득 */
+  @media (max-width: 760px) {
+    video { width: 96vw; }
+  }
+  /* 낮은 화면(가로 모드 폰 등): 도구막대가 스크롤 없이 다 보이게 사진을 줄임 */
   @media (max-height: 720px) {
-    video, #photoWrap canvas { width: min(86vw, calc(46vh * 16 / 9)); }
+    video { width: min(96vw, calc(72vh * 16 / 9)); }
+    #photoWrap canvas { width: min(82vw, calc(42vh * 16 / 9)); }
   }
   /* 그래도 넘칠 때를 대비해 꾸미기 화면은 세로 스크롤 허용(최후 안전장치) */
   #scrDecorate { overflow-y: auto; padding: 10px 0; }
+
+  /* ── 꾸미기 옵션 패널(접기/펴기) ── */
+  #decoratePanel {
+    display: flex; flex-direction: column; gap: 12px;
+    align-items: center;
+    width: 100%;
+  }
+  #decoratePanel.closed { display: none; }
+  #btnDecorate.on { background: #5b8def; border-color: #5b8def; }
 
   #countdown {
     position: absolute; inset: 0;
@@ -181,8 +211,12 @@
   </div>
   <div class="row" style="gap:12px">
     <button class="ctrl on" id="btnSfx" title="촬영 카운트다운·셔터 효과음">🔊 효과음</button>
-    <button class="ctrl" id="btnBgm" title="배경음악 (bgm.mp3 파일이 있을 때)">🎵 배경음악</button>
+    <button class="ctrl" id="btnBgm" title="배경음악 켜기/끄기">🎵 배경음악</button>
+    <button class="ctrl" id="btnLoadBgm" title="배경음악 파일 불러오기">📂 음악 파일</button>
+    <button class="ctrl" id="btnLoadSfx" title="셔터 효과음 파일 불러오기">📂 효과음 파일</button>
   </div>
+  <input type="file" id="bgmFile" accept="audio/*" style="display:none">
+  <input type="file" id="sfxFile" accept="audio/*" style="display:none">
   <div id="recentWrap" style="display:none">
     <h3>― 최근 방명록 ―</h3>
     <div id="recent"></div>
@@ -205,59 +239,64 @@
 
 <!-- ═══ 3. 꾸미기 화면 ═══ -->
 <div class="screen" id="scrDecorate">
+  <!-- 주기능: 핸드폰으로 보내기 (상단) -->
+  <div class="row">
+    <button class="ctrl" id="btnRetake">↺ 다시 찍기</button>
+    <button class="ctrl primary" id="btnSend" style="font-size:20px; padding:15px 48px">📱 핸드폰으로 보내기</button>
+    <button class="ctrl" id="btnDecorate">🎨 꾸미기</button>
+  </div>
   <div id="photoWrap">
     <canvas id="photoCanvas"></canvas>
     <canvas id="doodleCanvas"></canvas>
     <canvas id="overlayCanvas"></canvas>
     <canvas id="frameCanvas"></canvas>
   </div>
-  <div class="penbar" id="modebar">
-    <button class="ctrl on" id="btnModeDraw">✏️ 그리기</button>
-    <button class="ctrl" id="btnModePlace">🧷 스티커·글자</button>
-    <span style="opacity:.5">|</span>
-    <span style="opacity:.7">프레임:</span>
-    <button class="ctrl frame on" data-f="0">없음</button>
-    <button class="ctrl frame" data-f="1">🕸️ 거미줄</button>
-    <button class="ctrl frame" data-f="2">┄ 점선</button>
-    <button class="ctrl frame" data-f="3">🎃 호박</button>
-  </div>
-  <div class="penbar" id="decobar" style="display:none">
-    <button class="ctrl sticker" data-e="🕷️">🕷️</button>
-    <button class="ctrl sticker" data-e="🕸️">🕸️</button>
-    <button class="ctrl sticker" data-e="🎃">🎃</button>
-    <button class="ctrl sticker" data-e="👻">👻</button>
-    <button class="ctrl sticker" data-e="🦇">🦇</button>
-    <button class="ctrl sticker" data-e="💀">💀</button>
-    <button class="ctrl sticker" data-e="🌙">🌙</button>
-    <button class="ctrl sticker" data-e="⭐">⭐</button>
-    <input type="text" id="textInput" placeholder="글자 입력" maxlength="30"
-           style="font-size:15px; padding:8px 10px; border-radius:8px; border:1px solid #4a4a5a; background:#2e2e3a; color:#eee; width:130px;">
-    <button class="ctrl" id="btnAddText">＋ 글자</button>
-    <label>크기 <input type="range" id="itemSize" min="24" max="280" step="2" value="96"></label>
-    <button class="ctrl" id="btnDelItem">🗑 선택 삭제</button>
-  </div>
-  <div class="penbar">
-    <span>거미줄 펜:</span>
-    <div class="swatch sel" data-c="#ffffff" style="background:#fff"></div>
-    <div class="swatch" data-c="#000000" style="background:#000"></div>
-    <div class="swatch" data-c="#ffd400" style="background:#ffd400"></div>
-    <div class="swatch" data-c="#ff5b7f" style="background:#ff5b7f"></div>
-    <div class="swatch" data-c="#5bff8d" style="background:#5bff8d"></div>
-    <div class="swatch" data-c="#ff8a1e" style="background:#ff8a1e"></div>
-    <div class="swatch" data-c="#b06bff" style="background:#b06bff"></div>
-    <div class="swatch" data-c="#5bd6ff" style="background:#5bd6ff"></div>
-    <label>굵기 <input type="range" id="penW" min="0.5" max="6" step="0.5" value="2"></label>
-    <button class="ctrl penpreset" data-w="1">얇게</button>
-    <button class="ctrl penpreset" data-w="2.5">보통</button>
-    <button class="ctrl penpreset" data-w="5">굵게</button>
-    <button class="ctrl" id="btnEraser">🧽 지우개</button>
-    <button class="ctrl" id="btnDoodleUndo">↶ 취소</button>
-    <button class="ctrl" id="btnDoodleRedo">↷ 다시</button>
-    <button class="ctrl" id="btnDoodleClear">전체 지우기</button>
-  </div>
-  <div class="row">
-    <button class="ctrl" id="btnRetake">↺ 다시 찍기</button>
-    <button class="ctrl primary" id="btnSend" style="font-size:20px; padding:15px 48px">📱 핸드폰으로 보내기</button>
+  <!-- 보조기능: 펜·스티커·프레임 (🎨 꾸미기로 펼침/접기) -->
+  <div id="decoratePanel" class="closed">
+    <div class="penbar" id="modebar">
+      <button class="ctrl on" id="btnModeDraw">✏️ 그리기</button>
+      <button class="ctrl" id="btnModePlace">🧷 스티커·글자</button>
+      <span style="opacity:.5">|</span>
+      <span style="opacity:.7">프레임:</span>
+      <button class="ctrl frame on" data-f="0">없음</button>
+      <button class="ctrl frame" data-f="1">🕸️ 거미줄</button>
+      <button class="ctrl frame" data-f="2">┄ 점선</button>
+      <button class="ctrl frame" data-f="3">🎃 호박</button>
+    </div>
+    <div class="penbar" id="decobar" style="display:none">
+      <button class="ctrl sticker" data-e="🕷️">🕷️</button>
+      <button class="ctrl sticker" data-e="🕸️">🕸️</button>
+      <button class="ctrl sticker" data-e="🎃">🎃</button>
+      <button class="ctrl sticker" data-e="👻">👻</button>
+      <button class="ctrl sticker" data-e="🦇">🦇</button>
+      <button class="ctrl sticker" data-e="💀">💀</button>
+      <button class="ctrl sticker" data-e="🌙">🌙</button>
+      <button class="ctrl sticker" data-e="⭐">⭐</button>
+      <input type="text" id="textInput" placeholder="글자 입력" maxlength="30"
+             style="font-size:15px; padding:8px 10px; border-radius:8px; border:1px solid #4a4a5a; background:#2e2e3a; color:#eee; width:130px;">
+      <button class="ctrl" id="btnAddText">＋ 글자</button>
+      <label>크기 <input type="range" id="itemSize" min="24" max="280" step="2" value="96"></label>
+      <button class="ctrl" id="btnDelItem">🗑 선택 삭제</button>
+    </div>
+    <div class="penbar">
+      <span>거미줄 펜:</span>
+      <div class="swatch sel" data-c="#ffffff" style="background:#fff"></div>
+      <div class="swatch" data-c="#000000" style="background:#000"></div>
+      <div class="swatch" data-c="#ffd400" style="background:#ffd400"></div>
+      <div class="swatch" data-c="#ff5b7f" style="background:#ff5b7f"></div>
+      <div class="swatch" data-c="#5bff8d" style="background:#5bff8d"></div>
+      <div class="swatch" data-c="#ff8a1e" style="background:#ff8a1e"></div>
+      <div class="swatch" data-c="#b06bff" style="background:#b06bff"></div>
+      <div class="swatch" data-c="#5bd6ff" style="background:#5bd6ff"></div>
+      <label>굵기 <input type="range" id="penW" min="0.5" max="6" step="0.5" value="2"></label>
+      <button class="ctrl penpreset" data-w="1">얇게</button>
+      <button class="ctrl penpreset" data-w="2.5">보통</button>
+      <button class="ctrl penpreset" data-w="5">굵게</button>
+      <button class="ctrl" id="btnEraser">🧽 지우개</button>
+      <button class="ctrl" id="btnDoodleUndo">↶ 취소</button>
+      <button class="ctrl" id="btnDoodleRedo">↷ 다시</button>
+      <button class="ctrl" id="btnDoodleClear">전체 지우기</button>
+    </div>
   </div>
 </div>
 
@@ -297,6 +336,7 @@
   // ─────────────────────────────────────────────────────────
   const Sfx = (() => {
     let ctx = null, on = (localStorage.getItem('gb_sfx') !== 'off');
+    let customShutter = null;   // 사용자가 불러온 셔터 효과음 파일(있으면 합성음 대신 재생)
     function ac() {
       if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
       if (ctx && ctx.state === 'suspended') ctx.resume();
@@ -315,7 +355,20 @@
     }
     return {
       beep: (f, d) => tone(f, d || 0.12, 'sine', 0.16),
-      shutter: () => { tone(1200, 0.05, 'square', 0.12); setTimeout(() => tone(300, 0.08, 'square', 0.1), 45); },
+      shutter: () => {
+        if (!on) return;
+        if (customShutter) { try { customShutter.currentTime = 0; customShutter.play().catch(() => {}); } catch (e) {} return; }
+        tone(1200, 0.05, 'square', 0.12); setTimeout(() => tone(300, 0.08, 'square', 0.1), 45);
+      },
+      // 사용자 효과음(셔터) 파일 지정 — 미리 한 번 재생해 들려주고 활성화
+      setShutter: (url) => {
+        customShutter = new Audio(url);
+        customShutter.volume = 0.7;
+        if (!on) { on = true; localStorage.setItem('gb_sfx', 'on'); }
+        ac();
+        try { customShutter.play().catch(() => {}); } catch (e) {}
+      },
+      hasCustom: () => !!customShutter,
       isOn: () => on,
       toggle: () => { on = !on; localStorage.setItem('gb_sfx', on ? 'on' : 'off'); if (on) ac(); return on; },
       prime: () => ac()   // 사용자 제스처에서 오디오컨텍스트 활성화
@@ -324,16 +377,24 @@
 
   // 배경음악: 같은 폴더에 bgm.mp3 가 있으면 재생(없으면 토글이 조용히 무시됨)
   const Bgm = (() => {
-    let audio = null, want = false;
+    let audio = null, want = false, src = 'bgm.mp3';   // 기본: 같은 폴더의 bgm.mp3
     function el() {
       if (!audio) {
-        audio = new Audio('bgm.mp3');
+        audio = new Audio(src);
         audio.loop = true;
         audio.volume = 0.35;
       }
       return audio;
     }
     return {
+      // 사용자가 불러온 음악 파일로 교체 후 바로 재생
+      setSrc: (url) => {
+        src = url;
+        if (audio) { audio.pause(); audio = null; }
+        want = true;
+        el().play().catch(() => {});
+        return want;
+      },
       toggle: () => {
         want = !want;
         const a = el();
@@ -356,10 +417,27 @@
     if (!entries.length) { wrap.style.display = 'none'; return; }
     wrap.style.display = 'block';
     entries.slice(0, 12).forEach(en => {
+      const cell = document.createElement('div');
+      cell.className = 'recent-cell';
+
       const img = new Image();
       img.src = en.th || en.d;
       img.title = en.label || new Date(en.t).toLocaleString('ko-KR');
-      box.appendChild(img);
+      cell.appendChild(img);
+
+      const del = document.createElement('button');
+      del.className = 'recent-del';
+      del.textContent = '✕';
+      del.title = '이 기록 삭제';
+      del.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        if (!confirm('이 방명록 기록을 삭제할까요?')) return;
+        try { await GuestbookStore.remove(en.id); } catch (e) {}
+        loadRecent();
+      });
+      cell.appendChild(del);
+
+      box.appendChild(cell);
     });
   }
   function makeThumb(canvas) {
@@ -497,6 +575,9 @@
     items = [];
     selected = -1;
     setPlaceMode(false);
+    // 꾸미기 패널은 접은 상태로 시작 (주기능: 보내기)
+    $('decoratePanel').classList.add('closed');
+    $('btnDecorate').classList.remove('on');
     // 프레임 초기화
     frameStyle = 0;
     drawFrame();
@@ -913,16 +994,39 @@
     return { url: json.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/'), expiry: '60분' };
   }
 
-  // 공유용 업로드: tmpfiles 우선, 실패 시 Firebase Storage(설정된 경우)로 폴백
+  // catbox.moe 업로드 → { url, expiry:null }
+  // 응답이 곧 직접 이미지 URL(https://files.catbox.moe/xxx.jpg)이라
+  // 폰에서 인라인으로 열려 "이미지를 길게 눌러 사진에 저장"이 잘 됨 (만료 없음)
+  async function uploadCatbox(blob, filename) {
+    const fd = new FormData();
+    fd.append('reqtype', 'fileupload');
+    fd.append('fileToUpload', blob, filename);
+    const res = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const url = (await res.text()).trim();
+    if (!/^https?:\/\/\S+$/.test(url)) throw new Error(url || '업로드 실패');
+    return { url, expiry: null };
+  }
+
+  // 공유용 업로드: 폰에서 '사진 저장'이 잘 되는 인라인 이미지 호스트를 우선 사용
+  //   1) Firebase Storage(설정 시: 영구·인라인·광고 없음)
+  //   2) catbox.moe(무료·영구·인라인 이미지)
+  //   3) tmpfiles.org(60분 만료 — 최후 폴백)
   async function uploadForShare(blob, filename) {
     const errors = [];
+    // 1) Firebase Storage (storageBucket 설정 + 규칙 허용 시에만)
+    try {
+      if (GuestbookStore.isStorageReady && GuestbookStore.isStorageReady()) {
+        const url = await GuestbookStore.uploadImage(blob, filename);
+        if (url) return { url, expiry: null };
+      }
+    } catch (e) { errors.push('storage: ' + e.message); }
+    // 2) catbox.moe
+    try { return await uploadCatbox(blob, filename); }
+    catch (e) { errors.push('catbox: ' + e.message); }
+    // 3) tmpfiles.org
     try { return await uploadTmpfiles(blob, filename); }
     catch (e) { errors.push('tmpfiles: ' + e.message); }
-    // 폴백: Firebase Storage (storageBucket 설정 + Storage 규칙 허용 시 동작, 만료 없음)
-    try {
-      const url = await GuestbookStore.uploadImage(blob, filename);
-      if (url) return { url, expiry: null };
-    } catch (e) { errors.push('storage: ' + e.message); }
     throw new Error(errors.join(' / ') || '업로드 실패');
   }
 
@@ -972,7 +1076,7 @@
       $('spinner').style.display = 'none';
       $('qrBox').style.display = 'block';
       const expiryNote = expiry ? `링크는 ${expiry} 동안 유효합니다 · ` : '';
-      $('sendMsg').innerHTML = '📱 핸드폰 카메라로 QR을 스캔하세요<br><small>' + expiryNote + '스캔 후 사진을 길게 눌러 저장</small>';
+      $('sendMsg').innerHTML = '📱 핸드폰 카메라로 QR을 스캔하세요<br><small>' + expiryNote + '열린 사진을 길게 눌러 "사진에 저장"(갤러리)</small>';
       $('urlText').textContent = url;
       // 성공 시 90초 후 자동으로 처음 화면으로
       resetTimer = setTimeout(goHome, 90000);
@@ -1020,6 +1124,25 @@
     $('btnBgm').classList.toggle('on', on);
   });
 
+  // 배경음악 / 효과음 파일 직접 불러오기 (세션 동안 사용 — 새로고침 시 재선택)
+  $('btnLoadBgm').addEventListener('click', () => { Sfx.prime(); $('bgmFile').click(); });
+  $('bgmFile').addEventListener('change', e => {
+    const f = e.target.files[0]; if (!f) return;
+    Bgm.setSrc(URL.createObjectURL(f));
+    $('btnBgm').classList.add('on');
+    $('btnLoadBgm').textContent = '📂 ' + (f.name.length > 12 ? f.name.slice(0, 11) + '…' : f.name);
+    e.target.value = '';
+  });
+  $('btnLoadSfx').addEventListener('click', () => { Sfx.prime(); $('sfxFile').click(); });
+  $('sfxFile').addEventListener('change', e => {
+    const f = e.target.files[0]; if (!f) return;
+    Sfx.setShutter(URL.createObjectURL(f));
+    $('btnSfx').classList.add('on');
+    $('btnSfx').textContent = '🔊 효과음';
+    $('btnLoadSfx').textContent = '📂 ' + (f.name.length > 12 ? f.name.slice(0, 11) + '…' : f.name);
+    e.target.value = '';
+  });
+
   // 거미줄 펜 굵기 프리셋
   document.querySelectorAll('.penpreset').forEach(b => {
     b.addEventListener('click', () => {
@@ -1027,6 +1150,13 @@
       $('penW').value = pen.width;
     });
   });
+  // 🎨 꾸미기: 펜·스티커·프레임 도구 패널 펼침/접기 (주기능은 보내기)
+  $('btnDecorate').addEventListener('click', () => {
+    const open = $('decoratePanel').classList.contains('closed');
+    $('decoratePanel').classList.toggle('closed', !open);
+    $('btnDecorate').classList.toggle('on', open);
+  });
+
   $('btnShoot').addEventListener('click', shoot);
   $('btnFlip').addEventListener('click', flipCamera);
   $('btnRetake').addEventListener('click', startCamera);
