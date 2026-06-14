@@ -65,6 +65,8 @@
   }
   button.ctrl:active { background: #44445a; }
   button.ctrl.primary { background: #5b8def; border-color: #5b8def; }
+  button.ctrl.on { background: #5b8def; border-color: #5b8def; }
+  button.ctrl:disabled { opacity: 0.4; cursor: default; }
 
   .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
 
@@ -192,7 +194,9 @@
     <div class="swatch" data-c="#ff5b7f" style="background:#ff5b7f"></div>
     <div class="swatch" data-c="#5bff8d" style="background:#5bff8d"></div>
     <label>굵기 <input type="range" id="penW" min="0.5" max="6" step="0.5" value="2"></label>
+    <button class="ctrl" id="btnEraser">🧽 지우개</button>
     <button class="ctrl" id="btnDoodleUndo">↶ 취소</button>
+    <button class="ctrl" id="btnDoodleRedo">↷ 다시</button>
     <button class="ctrl" id="btnDoodleClear">전체 지우기</button>
   </div>
   <div class="row">
@@ -361,7 +365,11 @@
     pctx.restore();
 
     dctx.clearRect(0, 0, PHOTO_W, PHOTO_H);
-    doodleUndoStack.length = 0;
+    undoStack.length = 0;
+    redoStack.length = 0;
+    pen.erase = false;
+    $('btnEraser').classList.remove('on');
+    updateUndoButtons();
     stopCamera();
     show('scrDecorate');
 
@@ -376,9 +384,57 @@
   }
 
   // ── 거미줄 펜 (낙서장과 동일한 알고리즘, 낙서 레이어에만 반응) ──
-  const pen = { color: '#ffffff', width: 2, radius: 150, rays: 12 };
-  let drawing = false, ox = 0, oy = 0;
-  const doodleUndoStack = [];
+  const pen = { color: '#ffffff', width: 2, radius: 150, rays: 12, erase: false };
+  let drawing = false, ox = 0, oy = 0, lastStarX = 0, lastStarY = 0;
+  const STAR_STEP = 10;            // 이만큼 움직였을 때만 거미줄 생성 (성능)
+  const ERASE_W = 28;             // 지우개 굵기
+
+  // ── 영역 기반 실행취소/다시실행 (전체 캔버스 대신 변경된 영역만 저장 → 메모리 절약) ──
+  const undoStack = [];           // { x, y, img }
+  const redoStack = [];
+  const MAX_UNDO = 30;
+  let strokeBox = null, strokeBefore = null;   // 현재 획이 건드린 영역의 '이전' 상태
+
+  // 그리기 직전, 건드릴 영역(bx,by,bw,bh)의 이전 픽셀을 누적 캡처
+  function captureRegion(nx, ny, nw, nh) {
+    nx = Math.max(0, Math.floor(nx)); ny = Math.max(0, Math.floor(ny));
+    nw = Math.min(PHOTO_W, Math.ceil(nx + nw)) - nx;
+    nh = Math.min(PHOTO_H, Math.ceil(ny + nh)) - ny;
+    if (nw <= 0 || nh <= 0) return;
+    if (!strokeBox) {
+      strokeBefore = dctx.getImageData(nx, ny, nw, nh);
+      strokeBox = { x: nx, y: ny, w: nw, h: nh };
+      return;
+    }
+    const b = strokeBox;
+    if (nx >= b.x && ny >= b.y && nx + nw <= b.x + b.w && ny + nh <= b.y + b.h) return; // 이미 포함
+    // 합집합 영역으로 확장: 기존 영역은 보존된 이전값을, 새 영역은 현재(아직 안 그린) 값을 사용
+    const ux = Math.min(b.x, nx), uy = Math.min(b.y, ny);
+    const uw = Math.max(b.x + b.w, nx + nw) - ux;
+    const uh = Math.max(b.y + b.h, ny + nh) - uy;
+    const buf = dctx.getImageData(ux, uy, uw, uh);
+    const dx = b.x - ux, dy = b.y - uy;
+    for (let row = 0; row < b.h; row++) {
+      const src = (row * b.w) * 4;
+      const dst = ((row + dy) * uw + dx) * 4;
+      buf.data.set(strokeBefore.data.subarray(src, src + b.w * 4), dst);
+    }
+    strokeBefore = buf;
+    strokeBox = { x: ux, y: uy, w: uw, h: uh };
+  }
+  function commitStroke() {
+    if (strokeBox) {
+      undoStack.push({ x: strokeBox.x, y: strokeBox.y, img: strokeBefore });
+      if (undoStack.length > MAX_UNDO) undoStack.shift();
+      redoStack.length = 0;
+    }
+    strokeBox = null; strokeBefore = null;
+    updateUndoButtons();
+  }
+  function updateUndoButtons() {
+    $('btnDoodleUndo').disabled = !undoStack.length;
+    $('btnDoodleRedo').disabled = !redoStack.length;
+  }
 
   function drawStar(mx, my) {
     const r = pen.radius;
@@ -388,6 +444,7 @@
     const bh = Math.min(PHOTO_H, Math.ceil(my + r)) - by;
     if (bw <= 0 || bh <= 0) return;
     const data = dctx.getImageData(bx, by, bw, bh).data;
+    captureRegion(bx, by, bw, bh);
 
     dctx.save();
     dctx.globalAlpha = 0.25;
@@ -411,10 +468,19 @@
     dctx.restore();
   }
   function drawLine(x1, y1, x2, y2) {
+    const lw = pen.erase ? ERASE_W : pen.width;
+    const pad = lw / 2 + 1;
+    captureRegion(Math.min(x1, x2) - pad, Math.min(y1, y2) - pad,
+            Math.abs(x1 - x2) + pad * 2, Math.abs(y1 - y2) + pad * 2);
     dctx.save();
-    dctx.globalAlpha = 0.9;
-    dctx.strokeStyle = pen.color;
-    dctx.lineWidth = pen.width;
+    if (pen.erase) {
+      dctx.globalCompositeOperation = 'destination-out';
+      dctx.lineWidth = ERASE_W;
+    } else {
+      dctx.globalAlpha = 0.9;
+      dctx.strokeStyle = pen.color;
+      dctx.lineWidth = pen.width;
+    }
     dctx.lineCap = 'round';
     dctx.beginPath();
     dctx.moveTo(x1, y1);
@@ -430,39 +496,69 @@
   }
   function dDown(e) {
     const p = dpos(e);
-    doodleUndoStack.push(dctx.getImageData(0, 0, PHOTO_W, PHOTO_H));
-    if (doodleUndoStack.length > 20) doodleUndoStack.shift();
-    drawing = true; ox = p.x; oy = p.y;
-    drawStar(p.x, p.y);
+    drawing = true; ox = p.x; oy = p.y; lastStarX = p.x; lastStarY = p.y;
+    if (pen.erase) {
+      drawLine(p.x, p.y, p.x, p.y);   // 점 지우기
+    } else {
+      drawStar(p.x, p.y);
+    }
   }
   function dMove(e) {
     if (!drawing) return;
     const p = dpos(e);
-    drawStar(p.x, p.y);
     drawLine(ox, oy, p.x, p.y);
+    if (!pen.erase) {
+      // 일정 거리 이상 움직였을 때만 거미줄 생성 (getImageData 호출 절감)
+      const dx = p.x - lastStarX, dy = p.y - lastStarY;
+      if (dx * dx + dy * dy >= STAR_STEP * STAR_STEP) {
+        drawStar(p.x, p.y);
+        lastStarX = p.x; lastStarY = p.y;
+      }
+    }
     ox = p.x; oy = p.y;
   }
+  function dUp() { if (drawing) { drawing = false; commitStroke(); } }
   doodleCanvas.addEventListener('mousedown', dDown);
   doodleCanvas.addEventListener('mousemove', dMove);
-  window.addEventListener('mouseup', () => { drawing = false; });
+  window.addEventListener('mouseup', dUp);
   doodleCanvas.addEventListener('touchstart', e => { e.preventDefault(); dDown(e); }, { passive: false });
   doodleCanvas.addEventListener('touchmove',  e => { e.preventDefault(); dMove(e); }, { passive: false });
-  doodleCanvas.addEventListener('touchend',   e => { e.preventDefault(); drawing = false; }, { passive: false });
+  doodleCanvas.addEventListener('touchend',   e => { e.preventDefault(); dUp(); }, { passive: false });
 
   document.querySelectorAll('.swatch').forEach(s => {
     s.addEventListener('click', () => {
       document.querySelectorAll('.swatch').forEach(x => x.classList.remove('sel'));
       s.classList.add('sel');
       pen.color = s.dataset.c;
+      pen.erase = false;
+      $('btnEraser').classList.remove('on');
     });
   });
   $('penW').addEventListener('input', e => { pen.width = +e.target.value; });
+  $('btnEraser').addEventListener('click', () => {
+    pen.erase = !pen.erase;
+    $('btnEraser').classList.toggle('on', pen.erase);
+  });
   $('btnDoodleUndo').addEventListener('click', () => {
-    if (doodleUndoStack.length) dctx.putImageData(doodleUndoStack.pop(), 0, 0);
+    if (!undoStack.length) return;
+    const u = undoStack.pop();
+    redoStack.push({ x: u.x, y: u.y, img: dctx.getImageData(u.x, u.y, u.img.width, u.img.height) });
+    dctx.putImageData(u.img, u.x, u.y);
+    updateUndoButtons();
+  });
+  $('btnDoodleRedo').addEventListener('click', () => {
+    if (!redoStack.length) return;
+    const r = redoStack.pop();
+    undoStack.push({ x: r.x, y: r.y, img: dctx.getImageData(r.x, r.y, r.img.width, r.img.height) });
+    dctx.putImageData(r.img, r.x, r.y);
+    updateUndoButtons();
   });
   $('btnDoodleClear').addEventListener('click', () => {
-    doodleUndoStack.push(dctx.getImageData(0, 0, PHOTO_W, PHOTO_H));
+    undoStack.push({ x: 0, y: 0, img: dctx.getImageData(0, 0, PHOTO_W, PHOTO_H) });
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
     dctx.clearRect(0, 0, PHOTO_W, PHOTO_H);
+    updateUndoButtons();
   });
 
   // ─────────────────────────────────────────────────────────
