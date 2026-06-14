@@ -130,6 +130,7 @@
      '#photoWrap canvas' 규칙(specificity 1,0,1)을 이기려면 '#photoWrap #doodleCanvas'(2,0,0)로 올려야 함 */
   #photoWrap #doodleCanvas { cursor: crosshair; touch-action: none; background: transparent; }
   #photoWrap #overlayCanvas { touch-action: none; background: transparent; pointer-events: none; }
+  #photoWrap #frameCanvas { background: transparent; pointer-events: none; }
   .ctrl.sticker { font-size: 22px; padding: 6px 10px; line-height: 1; }
 
   .penbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; font-size: 14px; max-width: 94vw; }
@@ -204,10 +205,17 @@
     <canvas id="photoCanvas"></canvas>
     <canvas id="doodleCanvas"></canvas>
     <canvas id="overlayCanvas"></canvas>
+    <canvas id="frameCanvas"></canvas>
   </div>
   <div class="penbar" id="modebar">
     <button class="ctrl on" id="btnModeDraw">✏️ 그리기</button>
     <button class="ctrl" id="btnModePlace">🧷 스티커·글자</button>
+    <span style="opacity:.5">|</span>
+    <span style="opacity:.7">프레임:</span>
+    <button class="ctrl frame on" data-f="0">없음</button>
+    <button class="ctrl frame" data-f="1">🕸️ 거미줄</button>
+    <button class="ctrl frame" data-f="2">┄ 점선</button>
+    <button class="ctrl frame" data-f="3">🎃 호박</button>
   </div>
   <div class="penbar" id="decobar" style="display:none">
     <button class="ctrl sticker" data-e="🕷️">🕷️</button>
@@ -425,6 +433,10 @@
     items = [];
     selected = -1;
     setPlaceMode(false);
+    // 프레임 초기화
+    frameStyle = 0;
+    drawFrame();
+    document.querySelectorAll('.frame').forEach(x => x.classList.toggle('on', x.dataset.f === '0'));
     stopCamera();
     show('scrDecorate');
 
@@ -740,6 +752,74 @@
   });
 
   // ─────────────────────────────────────────────────────────
+  // 프레임(테두리) 오버레이
+  // ─────────────────────────────────────────────────────────
+  const frameCanvas = $('frameCanvas');
+  const fctx = frameCanvas.getContext('2d');
+  frameCanvas.width = PHOTO_W;
+  frameCanvas.height = PHOTO_H;
+  let frameStyle = 0;
+
+  function cornerWeb(cx, cy, r, a0, a1) {
+    const spokes = 6;
+    fctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    fctx.lineWidth = 1.6;
+    for (let i = 0; i <= spokes; i++) {
+      const a = a0 + (a1 - a0) * i / spokes;
+      fctx.beginPath();
+      fctx.moveTo(cx, cy);
+      fctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+      fctx.stroke();
+    }
+    for (let ring = 1; ring <= 4; ring++) {
+      const rr = r * ring / 4;
+      fctx.beginPath();
+      for (let i = 0; i <= spokes; i++) {
+        const a = a0 + (a1 - a0) * i / spokes;
+        const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+        i === 0 ? fctx.moveTo(x, y) : fctx.lineTo(x, y);
+      }
+      fctx.stroke();
+    }
+  }
+  function drawFrame() {
+    fctx.clearRect(0, 0, PHOTO_W, PHOTO_H);
+    const m = 18, W = PHOTO_W, H = PHOTO_H;
+    fctx.save();
+    if (frameStyle === 1) {            // 거미줄: 가는 테두리 + 네 모서리 거미줄
+      fctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      fctx.lineWidth = 4;
+      fctx.strokeRect(m, m, W - 2 * m, H - 2 * m);
+      const R = 150;
+      cornerWeb(m, m, R, 0, Math.PI / 2);
+      cornerWeb(W - m, m, R, Math.PI / 2, Math.PI);
+      cornerWeb(W - m, H - m, R, Math.PI, Math.PI * 1.5);
+      cornerWeb(m, H - m, R, Math.PI * 1.5, Math.PI * 2);
+    } else if (frameStyle === 2) {     // 점선 테두리
+      fctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      fctx.lineWidth = 7;
+      fctx.setLineDash([20, 13]);
+      fctx.strokeRect(m, m, W - 2 * m, H - 2 * m);
+    } else if (frameStyle === 3) {     // 호박색 두꺼운 테두리
+      fctx.strokeStyle = '#ff8a1e';
+      fctx.lineWidth = 16;
+      fctx.strokeRect(m, m, W - 2 * m, H - 2 * m);
+      fctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      fctx.lineWidth = 3;
+      fctx.strokeRect(m + 10, m + 10, W - 2 * m - 20, H - 2 * m - 20);
+    }
+    fctx.restore();
+  }
+  document.querySelectorAll('.frame').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.frame').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      frameStyle = +b.dataset.f;
+      drawFrame();
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────
   // 합성 → 업로드 → QR
   // ─────────────────────────────────────────────────────────
   let lastComposite = null;
@@ -754,6 +834,7 @@
     renderOverlay(true);              // 선택 테두리 없이 스티커·글자 렌더
     c.drawImage(overlayCanvas, 0, 0);
     renderOverlay();                  // 화면용(선택 테두리 포함)으로 복원
+    c.drawImage(frameCanvas, 0, 0);   // 프레임은 최상단
     return out;
   }
 
