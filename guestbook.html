@@ -191,6 +191,7 @@
   <div class="row">
     <button class="ctrl" id="btnCamBack">← 처음으로</button>
     <button class="ctrl primary" id="btnShoot" style="font-size:22px; padding:16px 56px">📷 촬영 (3초)</button>
+    <button class="ctrl" id="btnFlip" title="전면/후면 카메라 전환">🔄 카메라 전환</button>
   </div>
   <p class="sub" id="camError" style="color:#e88; display:none"></p>
 </div>
@@ -286,19 +287,22 @@
   // 카메라
   // ─────────────────────────────────────────────────────────
   const video = $('video');
+  let facing = 'user';   // 'user'(전면) | 'environment'(후면)
 
   async function startCamera() {
     show('scrCamera');
     $('camError').style.display = 'none';
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: PHOTO_W }, height: { ideal: PHOTO_H }, facingMode: 'user' },
+        video: { width: { ideal: PHOTO_W }, height: { ideal: PHOTO_H }, facingMode: facing },
         audio: false
       });
       video.srcObject = stream;
       // iOS Safari는 srcObject만 설정하면 재생되지 않아 검정 화면이 됨 → 명시적으로 play() 호출
       video.setAttribute('playsinline', '');
       video.muted = true;
+      // 전면 카메라만 거울 모드(좌우 반전), 후면은 그대로
+      video.style.transform = (facing === 'user') ? 'scaleX(-1)' : 'none';
       try { await video.play(); } catch (e) {}
       // videoWidth가 준비될 때까지 대기 (준비 전 캡처하면 검정으로 그려짐)
       if (!video.videoWidth) {
@@ -308,16 +312,26 @@
           setTimeout(done, 3000);
         });
       }
+      return true;
     } catch (err) {
       const e = $('camError');
       e.style.display = 'block';
       e.textContent = '카메라를 사용할 수 없습니다: ' + err.message +
         ' (브라우저 카메라 권한을 허용했는지, 다른 프로그램이 웹캠을 쓰고 있지 않은지 확인하세요)';
+      return false;
     }
   }
   function stopCamera() {
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     video.srcObject = null;
+  }
+  // 전/후면 전환 — 실패(해당 카메라 없음) 시 이전 카메라로 복귀
+  async function flipCamera() {
+    const prev = facing;
+    facing = (facing === 'user') ? 'environment' : 'user';
+    stopCamera();
+    const ok = await startCamera();
+    if (!ok) { facing = prev; stopCamera(); await startCamera(); }
   }
 
   // 촬영: 3초 카운트다운 → 캡처
@@ -357,10 +371,9 @@
   photoCanvas.height = doodleCanvas.height = PHOTO_H;
 
   function capture() {
-    // 미리보기와 같게 좌우 반전 캡처
+    // 미리보기와 같게 캡처 (전면은 좌우 반전, 후면은 그대로)
     pctx.save();
-    pctx.translate(PHOTO_W, 0);
-    pctx.scale(-1, 1);
+    if (facing === 'user') { pctx.translate(PHOTO_W, 0); pctx.scale(-1, 1); }
     // cover 방식으로 비율 맞추기
     const vw = video.videoWidth || PHOTO_W, vh = video.videoHeight || PHOTO_H;
     const s = Math.max(PHOTO_W / vw, PHOTO_H / vh);
@@ -616,16 +629,19 @@
     throw new Error(errors.join(' / ') || '업로드 실패');
   }
 
+  // Blob → dataURL (같은 인코딩 결과 재사용용)
+  function blobToDataURL(blob) {
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = () => rej(fr.error);
+      fr.readAsDataURL(blob);
+    });
+  }
+
   async function send() {
     const out = composite();
     lastComposite = out;
-    // 촬영 시 저장한 기록을 꾸민(낙서 포함) 최종본으로 갱신
-    if (currentEntryId) {
-      GuestbookStore.update(currentEntryId, {
-        d: out.toDataURL('image/jpeg', 0.85),
-        th: makeThumb(out)
-      });
-    }
 
     show('scrSend');
     $('spinner').style.display = 'block';
@@ -640,7 +656,15 @@
     const filename = `guestbook_${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}_${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}.jpg`;
 
     try {
-      const blob = await new Promise(r => out.toBlob(r, 'image/jpeg', 0.92));
+      // JPEG 인코딩은 한 번만 — 업로드(blob)와 저장(dataURL)에 같은 결과 재사용
+      const blob = await new Promise(r => out.toBlob(r, 'image/jpeg', 0.9));
+      // 꾸민(낙서 포함) 최종본을 기록에 저장 (업로드 실패해도 기록은 남음)
+      if (currentEntryId) {
+        try {
+          const dataURL = await blobToDataURL(blob);
+          GuestbookStore.update(currentEntryId, { d: dataURL, th: makeThumb(out) });
+        } catch (e) {}
+      }
       const { url, expiry } = await uploadForShare(blob, filename);
 
       // QR 생성
@@ -685,6 +709,7 @@
   $('btnStart').addEventListener('click', startCamera);
   $('btnCamBack').addEventListener('click', goHome);
   $('btnShoot').addEventListener('click', shoot);
+  $('btnFlip').addEventListener('click', flipCamera);
   $('btnRetake').addEventListener('click', startCamera);
   $('btnSend').addEventListener('click', send);
   $('btnRetry').addEventListener('click', send);
