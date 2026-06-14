@@ -179,6 +179,10 @@
     <a href="index.html" style="color:#667; font-size:13px; text-decoration:none">⌂ 메뉴로 돌아가기</a>
     <a href="admin.html" style="color:#445; font-size:13px; text-decoration:none">⚙ 기록 관리</a>
   </div>
+  <div class="row" style="gap:12px">
+    <button class="ctrl on" id="btnSfx" title="촬영 카운트다운·셔터 효과음">🔊 효과음</button>
+    <button class="ctrl" id="btnBgm" title="배경음악 (bgm.mp3 파일이 있을 때)">🎵 배경음악</button>
+  </div>
   <div id="recentWrap" style="display:none">
     <h3>― 최근 방명록 ―</h3>
     <div id="recent"></div>
@@ -239,7 +243,13 @@
     <div class="swatch" data-c="#ffd400" style="background:#ffd400"></div>
     <div class="swatch" data-c="#ff5b7f" style="background:#ff5b7f"></div>
     <div class="swatch" data-c="#5bff8d" style="background:#5bff8d"></div>
+    <div class="swatch" data-c="#ff8a1e" style="background:#ff8a1e"></div>
+    <div class="swatch" data-c="#b06bff" style="background:#b06bff"></div>
+    <div class="swatch" data-c="#5bd6ff" style="background:#5bd6ff"></div>
     <label>굵기 <input type="range" id="penW" min="0.5" max="6" step="0.5" value="2"></label>
+    <button class="ctrl penpreset" data-w="1">얇게</button>
+    <button class="ctrl penpreset" data-w="2.5">보통</button>
+    <button class="ctrl penpreset" data-w="5">굵게</button>
     <button class="ctrl" id="btnEraser">🧽 지우개</button>
     <button class="ctrl" id="btnDoodleUndo">↶ 취소</button>
     <button class="ctrl" id="btnDoodleRedo">↷ 다시</button>
@@ -281,6 +291,58 @@
 
   let stream = null;
   let resetTimer = null;
+
+  // ─────────────────────────────────────────────────────────
+  // 사운드: 효과음(WebAudio, 파일 불필요) + 배경음악(선택 파일 bgm.mp3)
+  // ─────────────────────────────────────────────────────────
+  const Sfx = (() => {
+    let ctx = null, on = (localStorage.getItem('gb_sfx') !== 'off');
+    function ac() {
+      if (!ctx) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+      if (ctx && ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+    function tone(freq, dur, type, gain) {
+      if (!on) return;
+      const c = ac(); if (!c) return;
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = type || 'sine';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(gain || 0.18, c.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
+      o.connect(g); g.connect(c.destination);
+      o.start(); o.stop(c.currentTime + dur);
+    }
+    return {
+      beep: (f, d) => tone(f, d || 0.12, 'sine', 0.16),
+      shutter: () => { tone(1200, 0.05, 'square', 0.12); setTimeout(() => tone(300, 0.08, 'square', 0.1), 45); },
+      isOn: () => on,
+      toggle: () => { on = !on; localStorage.setItem('gb_sfx', on ? 'on' : 'off'); if (on) ac(); return on; },
+      prime: () => ac()   // 사용자 제스처에서 오디오컨텍스트 활성화
+    };
+  })();
+
+  // 배경음악: 같은 폴더에 bgm.mp3 가 있으면 재생(없으면 토글이 조용히 무시됨)
+  const Bgm = (() => {
+    let audio = null, want = false;
+    function el() {
+      if (!audio) {
+        audio = new Audio('bgm.mp3');
+        audio.loop = true;
+        audio.volume = 0.35;
+      }
+      return audio;
+    }
+    return {
+      toggle: () => {
+        want = !want;
+        const a = el();
+        if (want) { a.play().catch(() => {}); } else { a.pause(); }
+        return want;
+      },
+      isOn: () => want
+    };
+  })();
 
   // ─────────────────────────────────────────────────────────
   // 시작 화면: 최근 방명록 (IndexedDB 원본 저장 + Firebase 동기화)
@@ -373,10 +435,12 @@
     cd.style.display = 'flex';
     for (let n = 3; n >= 1; n--) {
       cd.textContent = n;
+      Sfx.beep(660, 0.12);              // 카운트다운 틱
       await new Promise(r => setTimeout(r, 1000));
     }
     cd.style.display = 'none';
     shooting = false;
+    Sfx.shutter();                      // 셔터음
 
     // 플래시 효과
     const flash = $('flash');
@@ -939,8 +1003,30 @@
   // ─────────────────────────────────────────────────────────
   // 버튼 연결
   // ─────────────────────────────────────────────────────────
-  $('btnStart').addEventListener('click', startCamera);
+  $('btnStart').addEventListener('click', () => { Sfx.prime(); startCamera(); });
   $('btnCamBack').addEventListener('click', goHome);
+
+  // 효과음 / 배경음악 토글
+  $('btnSfx').classList.toggle('on', Sfx.isOn());
+  $('btnSfx').textContent = Sfx.isOn() ? '🔊 효과음' : '🔇 효과음';
+  $('btnSfx').addEventListener('click', () => {
+    const on = Sfx.toggle();
+    $('btnSfx').classList.toggle('on', on);
+    $('btnSfx').textContent = on ? '🔊 효과음' : '🔇 효과음';
+    if (on) Sfx.beep(660, 0.12);
+  });
+  $('btnBgm').addEventListener('click', () => {
+    const on = Bgm.toggle();
+    $('btnBgm').classList.toggle('on', on);
+  });
+
+  // 거미줄 펜 굵기 프리셋
+  document.querySelectorAll('.penpreset').forEach(b => {
+    b.addEventListener('click', () => {
+      pen.width = +b.dataset.w;
+      $('penW').value = pen.width;
+    });
+  });
   $('btnShoot').addEventListener('click', shoot);
   $('btnFlip').addEventListener('click', flipCamera);
   $('btnRetake').addEventListener('click', startCamera);
