@@ -227,6 +227,10 @@
   </div>
   <input type="file" id="bgmFile" accept="audio/*" style="display:none">
   <input type="file" id="sfxFile" accept="audio/*" style="display:none">
+  <div class="row" style="gap:12px">
+    <button class="ctrl" id="btnKeep" title="QR 링크(사진)를 얼마나 오래 보관할지 선택">🕒 보관: 72시간</button>
+  </div>
+  <p class="sub" id="keepHint" style="font-size:12px; margin-top:-4px">QR 링크 유효 기간 · 영구 보관은 Firebase 연동 시 자동 적용</p>
   <div id="recentWrap" style="display:none">
     <h3>― 최근 방명록 ―</h3>
     <div id="recent"></div>
@@ -340,6 +344,21 @@
 
   const UPLOAD_API = 'https://tmpfiles.org/api/v1/upload';
   const PHOTO_W = 1280, PHOTO_H = 720;
+
+  // 사진(QR 링크) 보관 기간 옵션 — 시작 화면에서 선택, localStorage에 저장
+  //  litter: litterbox.catbox.moe(브라우저 CORS 허용, 최대 72h) / tmp: tmpfiles.org(60분)
+  //  영구 보관은 Firebase Storage 연동 시 자동 우선(아래 uploadForShare 참고)
+  const KEEP_OPTS = [
+    { id: '72h', label: '72시간', host: 'litter', time: '72h', note: '72시간' },
+    { id: '24h', label: '24시간', host: 'litter', time: '24h', note: '24시간' },
+    { id: '12h', label: '12시간', host: 'litter', time: '12h', note: '12시간' },
+    { id: '60m', label: '60분',  host: 'tmp',    time: null,  note: '60분' },
+  ];
+  function getKeep() {
+    const id = localStorage.getItem('gb_keep') || '72h';
+    return KEEP_OPTS.find(o => o.id === id) || KEEP_OPTS[0];
+  }
+  function setKeep(id) { try { localStorage.setItem('gb_keep', id); } catch (e) {} }
 
   const $ = id => document.getElementById(id);
   const screens = ['scrStart', 'scrCamera', 'scrDecorate', 'scrSend'];
@@ -1010,17 +1029,6 @@
     return out;
   }
 
-  // 구형 브라우저용 Promise.any 폴리필(먼저 이행되는 하나를 채택, 모두 실패 시 AggregateError 유사 객체)
-  const anyOf = (Promise.any
-    ? (arr) => Promise.any(arr)
-    : (arr) => new Promise((res, rej) => {
-        let left = arr.length; const errs = [];
-        if (!left) { rej({ errors: errs }); return; }
-        arr.forEach((p, i) => Promise.resolve(p).then(res, e => {
-          errs[i] = e; if (--left === 0) rej({ errors: errs });
-        }));
-      }));
-
   // 무료 이미지 호스트는 자주 멈추므로(응답 없음) 각 시도에 타임아웃을 둔다.
   const UPLOAD_TIMEOUT_MS = 15000;
   // 타임아웃이 없는 Promise(예: Firebase Storage put)에 시간 제한을 건다.
@@ -1063,46 +1071,51 @@
     return { url: json.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/'), expiry: '60분' };
   }
 
-  // catbox.moe 업로드 → { url, expiry:null }
-  // 응답이 곧 직접 이미지 URL(https://files.catbox.moe/xxx.jpg)이라
-  // 폰에서 인라인으로 열려 "이미지를 길게 눌러 사진에 저장"이 잘 됨 (만료 없음)
-  async function uploadCatbox(blob, filename, onProgress) {
+  // litterbox.catbox.moe 업로드 → 직접 이미지 URL. time: 1h/12h/24h/72h (브라우저 CORS 허용됨)
+  // ※ catbox.moe(영구)는 브라우저에서 CORS 차단되어 사용 불가 → litterbox(최대 72h) 사용
+  async function uploadLitterbox(blob, filename, time, onProgress) {
     const fd = new FormData();
     fd.append('reqtype', 'fileupload');
+    fd.append('time', time);
     fd.append('fileToUpload', blob, filename);
-    const url = (await xhrUpload('https://catbox.moe/user/api.php', fd, onProgress)).trim();
+    const url = (await xhrUpload('https://litterbox.catbox.moe/resources/internals/api.php', fd, onProgress)).trim();
     if (!/^https?:\/\/\S+$/.test(url)) throw new Error(url || '업로드 실패');
-    return { url, expiry: null };
+    return { url };
   }
 
-  // 공유용 업로드: 폰에서 '사진 저장'이 잘 되는 인라인 이미지 호스트를 우선 사용
-  //   1) Firebase Storage(설정 시: 영구·인라인·광고 없음)
-  //   2) catbox.moe(무료·영구·인라인 이미지) + tmpfiles.org(60분) 동시 시도 → 먼저 성공한 쪽
-  // onProgress(fraction 0~1)로 진행률 보고(병렬 시도 중 가장 앞선 진행률).
+  // 공유용 업로드: 사진 보관 기간 설정(Keep)에 따라 호스트를 고른다.
+  //   1) Firebase Storage(설정 시) → 영구
+  //   2) litterbox(72/24/12시간) — 선택값. 실패 시 tmpfiles로 폴백
+  //   3) tmpfiles(60분) — '60분' 선택 시 기본, 그 외엔 폴백
+  // onProgress(fraction 0~1)로 진행률 보고.
   async function uploadForShare(blob, filename, onProgress) {
     const report = onProgress || function () {};
-    // 1) Firebase Storage (storageBucket 설정 + 규칙 허용 시에만) — 설정돼 있으면 우선
+    const keep = getKeep();
+    // 1) Firebase Storage (storageBucket 설정 + 규칙 허용 시에만) — 영구, 항상 우선
     try {
       if (GuestbookStore.isStorageReady && GuestbookStore.isStorageReady()) {
         const url = await withTimeout(GuestbookStore.uploadImage(blob, filename), 20000, 'Storage 업로드');
         if (url) { report(1); return { url, expiry: null }; }
       }
     } catch (e) { /* Storage 실패 → 아래 무료 호스트로 폴백 */ }
-    // 2) catbox + tmpfiles 동시 시도. 두 진행률 중 큰 값을 화면에 보고
-    const frac = [0, 0];
-    const mk = (i) => (f) => { frac[i] = f; report(Math.max(frac[0], frac[1])); };
-    const attempts = [
-      uploadCatbox(blob, filename, mk(0)).catch(e => Promise.reject(new Error('catbox: ' + e.message))),
-      uploadTmpfiles(blob, filename, mk(1)).catch(e => Promise.reject(new Error('tmpfiles: ' + e.message))),
-    ];
-    try {
-      const r = await anyOf(attempts);
-      report(1);
-      return r;
-    } catch (agg) {
-      const msgs = (agg && agg.errors) ? agg.errors.map(e => e.message).join(' / ') : String(agg);
-      throw new Error(msgs || '업로드 실패');
+
+    const errors = [];
+    // 2) litterbox (선택한 시간) — 60분 선택이 아니면 우선 시도
+    if (keep.host === 'litter') {
+      try {
+        const r = await uploadLitterbox(blob, filename, keep.time, report);
+        report(1);
+        return { url: r.url, expiry: keep.note };
+      } catch (e) { errors.push('litterbox: ' + e.message); }
     }
+    // 3) tmpfiles (60분) — 60분 선택 시 기본, 그 외엔 폴백
+    try {
+      const r = await uploadTmpfiles(blob, filename, report);
+      report(1);
+      return { url: r.url, expiry: '60분' };
+    } catch (e) { errors.push('tmpfiles: ' + e.message); }
+
+    throw new Error(errors.join(' / ') || '업로드 실패');
   }
 
   // Blob → dataURL (같은 인코딩 결과 재사용용)
@@ -1204,6 +1217,22 @@
   // ─────────────────────────────────────────────────────────
   $('btnStart').addEventListener('click', () => { Sfx.prime(); startCamera(); });
   $('btnCamBack').addEventListener('click', goHome);
+
+  // 사진 보관 기간 선택 — 누를 때마다 72→24→12시간→60분 순환
+  function refreshKeepBtn() {
+    const k = getKeep();
+    const permanent = GuestbookStore.isStorageReady && GuestbookStore.isStorageReady();
+    $('btnKeep').textContent = '🕒 보관: ' + k.label;
+    $('keepHint').textContent = permanent
+      ? 'Firebase 연동됨 → 사진은 영구 보관됩니다(이 설정과 무관)'
+      : 'QR 링크 유효 기간 · 영구 보관은 Firebase 연동 시 자동 적용';
+  }
+  refreshKeepBtn();
+  $('btnKeep').addEventListener('click', () => {
+    const i = KEEP_OPTS.findIndex(o => o.id === getKeep().id);
+    setKeep(KEEP_OPTS[(i + 1) % KEEP_OPTS.length].id);
+    refreshKeepBtn();
+  });
 
   // 효과음 / 배경음악 토글
   $('btnSfx').classList.toggle('on', Sfx.isOn());
