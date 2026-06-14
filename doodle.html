@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>거미줄 낙서장</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -77,6 +80,7 @@
   button:hover { background: #4d4d4d; }
   button:active { background: #5a5a5a; }
   button:disabled { opacity: 0.35; cursor: default; }
+  button.on { background: #5b8def; border-color: #5b8def; color: #fff; }
 
   label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
   input[type="range"] { width: 70px; accent-color: #8ab4f8; }
@@ -130,19 +134,22 @@
 
   input[type="file"] { display: none; }
 
-  /* 좁은 화면(핸드폰): 툴바를 한 줄 가로 스크롤로 — 캔버스 전체보기 확보 */
+  /* 좁은 화면(핸드폰): 툴바를 여러 줄로 줄바꿈 — 모든 도구(색상 선택기 포함)가
+     가로 스크롤 없이 한눈에 보이게. 캔버스는 fit()이 툴바 높이만큼 자동 축소 */
   @media (max-width: 760px) {
     #toolbar {
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 6px;
     }
-    #toolbar::-webkit-scrollbar { display: none; }
-    .group { flex: 0 0 auto; }
+    .group {
+      flex: 0 0 auto;
+      border-right: none;
+      padding: 0 4px;
+    }
     .group:last-child { margin-left: 0; }
-    input[type="range"] { width: 56px; }
-    #mainW, #subW { width: 200px; }
+    input[type="range"] { width: 90px; }
+    #mainW, #subW { width: 150px; }
     #cursor { display: none !important; }
   }
 </style>
@@ -161,6 +168,7 @@
   <div class="group">
     <button id="btnUndo" title="실행취소 (Ctrl+Z)">↶ 실행취소</button>
     <button id="btnRedo" title="재실행 (Ctrl+Y)">↷ 재실행</button>
+    <button id="btnEraser" title="지우개 (그린 거미줄을 지움)">🧽 지우개</button>
   </div>
   <div class="group">
     <label>선 굵기 <input type="range" id="mainW" min="0.1" max="3" step="0.1" value="0.5"><span class="val" id="mainWVal">0.5</span></label>
@@ -206,7 +214,9 @@
     subC: '#000000',
     paperC: '#ffffff',
     radius: 250,    // 광선 탐색 반경
-    rays: 16        // 이동당 광선 개수
+    rays: 16,       // 이동당 광선 개수
+    erase: false,   // 지우개 모드
+    eraseW: Math.max(24, Math.round(Math.max(W, H) * 0.02)) // 지우개 굵기(해상도 비례)
   };
 
   // ── 상태 ──────────────────────────────────────────────────
@@ -308,6 +318,20 @@
     ctx.restore();
   }
 
+  // ── 지우개 (그려진 잉크 레이어를 투명하게 — 도화지 색이 다시 드러남) ──
+  function eraseLine(x1, y1, x2, y2) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.lineWidth = cfg.eraseW;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // ── 좌표 변환 ─────────────────────────────────────────────
   function getPos(e) {
     const r = canvas.getBoundingClientRect();
@@ -323,13 +347,18 @@
     oldx = p.x; oldy = p.y;
     isDrawing = true;
     dirty = true;
-    drawStar(p.x, p.y);
+    if (cfg.erase) eraseLine(p.x, p.y, p.x, p.y);
+    else drawStar(p.x, p.y);
   }
   function pointerMove(e) {
     if (!isDrawing) return;
     const p = getPos(e);
-    drawStar(p.x, p.y);
-    drawLine(oldx, oldy, p.x, p.y);
+    if (cfg.erase) {
+      eraseLine(oldx, oldy, p.x, p.y);
+    } else {
+      drawStar(p.x, p.y);
+      drawLine(oldx, oldy, p.x, p.y);
+    }
     oldx = p.x; oldy = p.y;
   }
   function pointerUp(e) {
@@ -337,8 +366,8 @@
     isDrawing = false;
     if (e && !e.touches) {
       const p = getPos(e);
-      drawStar(p.x, p.y);
-      drawLine(oldx, oldy, p.x, p.y);
+      if (cfg.erase) eraseLine(oldx, oldy, p.x, p.y);
+      else { drawStar(p.x, p.y); drawLine(oldx, oldy, p.x, p.y); }
     }
   }
 
@@ -362,6 +391,9 @@
     H = window.screen.height || 1080;
     canvas.width = W;
     canvas.height = H;
+    cfg.eraseW = Math.max(24, Math.round(Math.max(W, H) * 0.02));
+    cfg.erase = false;
+    $('btnEraser').classList.remove('on');
     undoStack.length = 0;
     redoStack.length = 0;
     dirty = false;
@@ -460,6 +492,10 @@
   $('btnClose').addEventListener('click', closeApp);
   $('btnUndo').addEventListener('click', undo);
   $('btnRedo').addEventListener('click', redo);
+  $('btnEraser').addEventListener('click', () => {
+    cfg.erase = !cfg.erase;
+    $('btnEraser').classList.toggle('on', cfg.erase);
+  });
   // 전체화면: 표준 + webkit(구형 안드로이드/사파리) 폴백,
   // 둘 다 없는 iOS 사파리에서는 툴바를 숨겨 유사 전체화면으로 동작
   const docEl = document.documentElement;
