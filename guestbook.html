@@ -58,7 +58,8 @@
   }
   .bigbtn:active { transform: scale(0.96); }
 
-  button.ctrl {
+  button.ctrl, a.ctrl {
+    display: inline-block;
     background: #2e2e3a;
     border: 1px solid #4a4a5a;
     color: #eee;
@@ -66,9 +67,10 @@
     padding: 13px 28px;
     border-radius: 12px;
     cursor: pointer;
+    text-decoration: none;
   }
-  button.ctrl:active { background: #44445a; }
-  button.ctrl.primary { background: #5b8def; border-color: #5b8def; }
+  button.ctrl:active, a.ctrl:active { background: #44445a; }
+  button.ctrl.primary, a.ctrl.primary { background: #5b8def; border-color: #5b8def; }
   button.ctrl.on { background: #5b8def; border-color: #5b8def; }
   button.ctrl:disabled { opacity: 0.4; cursor: default; }
 
@@ -317,10 +319,15 @@
   </div>
   <div id="qrBox"><img id="qrImg" alt="QR"></div>
   <div id="sendMsg">업로드 중...</div>
+  <div class="row" id="shareRow" style="display:none">
+    <a class="ctrl primary" id="btnOpenPhoto" target="_blank" rel="noopener">📷 사진 열기</a>
+    <button class="ctrl" id="btnShare" style="display:none">↗ 공유하기</button>
+    <button class="ctrl" id="btnCopyLink">📋 링크 복사</button>
+  </div>
   <div id="urlText"></div>
   <div class="row">
     <button class="ctrl" id="btnRetry" style="display:none">🔄 다시 시도</button>
-    <button class="ctrl" id="btnLocalSave">💾 PC에 저장</button>
+    <button class="ctrl" id="btnLocalSave">💾 저장</button>
     <button class="ctrl primary" id="btnDone">✓ 처음으로</button>
   </div>
 </div>
@@ -988,6 +995,7 @@
   // ─────────────────────────────────────────────────────────
   let lastComposite = null;
   let currentEntryId = null;
+  let lastShareUrl = null;   // 마지막으로 업로드된 공유 링크(열기/복사/공유용)
 
   function composite() {
     const out = document.createElement('canvas');
@@ -1115,6 +1123,7 @@
     $('spinner').style.display = 'block';
     $('qrBox').style.display = 'none';
     $('btnRetry').style.display = 'none';
+    $('shareRow').style.display = 'none';
     $('sendMsg').innerHTML = '업로드 중...';
     $('urlText').textContent = '';
     clearTimeout(resetTimer);   // 업로드 중에는 자동 복귀 타이머를 멈춰 둠
@@ -1156,7 +1165,12 @@
       progWrap.style.display = 'none';
       $('qrBox').style.display = 'block';
       const expiryNote = expiry ? `링크는 ${expiry} 동안 유효합니다 · ` : '';
-      $('sendMsg').innerHTML = '📱 핸드폰 카메라로 QR을 스캔하세요<br><small>' + expiryNote + '열린 사진을 길게 눌러 "사진에 저장"(갤러리)</small>';
+      $('sendMsg').innerHTML = '📱 다른 기기는 QR 스캔, 이 폰에서는 아래 버튼으로 열기/저장/공유<br><small>' + expiryNote + '열린 사진을 길게 눌러 "사진에 저장"(갤러리)</small>';
+      // 공유용 링크/버튼 (특히 이 핸드폰에서 직접 쓸 때) — QR 못 찍어도 바로 열기·복사·공유 가능
+      lastShareUrl = url;
+      $('btnOpenPhoto').href = url;
+      $('shareRow').style.display = 'flex';
+      $('btnShare').style.display = (navigator.share ? '' : 'none');
       $('urlText').textContent = url;
       // 성공 시 90초 후 자동으로 처음 화면으로
       resetTimer = setTimeout(goHome, 90000);
@@ -1248,6 +1262,33 @@
   $('btnRetry').addEventListener('click', send);
   $('btnLocalSave').addEventListener('click', localSave);
   $('btnDone').addEventListener('click', goHome);
+
+  // 링크 복사 — 손님이 다른 사람에게 주소를 전달할 때
+  $('btnCopyLink').addEventListener('click', async () => {
+    if (!lastShareUrl) return;
+    let ok = false;
+    try { await navigator.clipboard.writeText(lastShareUrl); ok = true; }
+    catch (e) {
+      // clipboard API 미지원/거부 시 임시 입력창으로 폴백
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = lastShareUrl; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (e2) {}
+    }
+    const b = $('btnCopyLink'), prev = b.textContent;
+    b.textContent = ok ? '✓ 복사됨' : '✗ 복사 실패';
+    setTimeout(() => { b.textContent = prev; }, 1500);
+  });
+
+  // 공유하기 — 카카오톡·메시지 등으로 링크 바로 전송 (navigator.share 지원 기기에서만)
+  $('btnShare').addEventListener('click', async () => {
+    if (!lastShareUrl || !navigator.share) return;
+    try { await navigator.share({ title: '포토 방명록', text: '포토 방명록 사진', url: lastShareUrl }); }
+    catch (e) { /* 사용자가 공유 취소 — 무시 */ }
+  });
 
 })();
 </script>
