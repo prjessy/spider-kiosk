@@ -7,12 +7,20 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>삼각형 모자익</title>
+<script src="qrcode.min.js"></script>
+<script>
+  // 로컬 qrcode.min.js가 없으면 CDN에서 로드
+  if (typeof qrcode === 'undefined') {
+    document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"><\/script>');
+  }
+</script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   html, body {
     width: 100%; height: 100%;
     background: #2b2b2b;
+    color: #eee;
     overflow: hidden;
     font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
     user-select: none;
@@ -116,6 +124,8 @@
   input[type="range"] { width: 70px; accent-color: #f0b27a; touch-action: none; }
   #brushR, #cellS, #jitter { width: 200px; height: 26px; }
   .val { width: 38px; text-align: right; color: #f0b27a; font-variant-numeric: tabular-nums; }
+  .seg { display: inline-flex; gap: 4px; }
+  .seg button.on { background: #ef9a5b; border-color: #ef9a5b; color: #fff; }
 
   #showTab {
     position: fixed;
@@ -140,9 +150,10 @@
     box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
     pointer-events: none;
     transform: translate(-50%, -50%);
-    z-index: 999;
+    z-index: 90;
     display: none;
   }
+  #cursor.erase { border-color: #ff7a7a; border-style: dashed; }
 
   #hint {
     position: fixed;
@@ -157,6 +168,49 @@
   }
 
   input[type="file"] { display: none; }
+
+  /* ── 카메라 / 전송 오버레이 ───────────────────── */
+  .overlay {
+    position: fixed; inset: 0;
+    z-index: 200;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    background: #16161d;
+    padding: 16px;
+  }
+  .overlay.active { display: flex; }
+  .overlay video {
+    width: min(92vw, 900px);
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: 14px;
+    background: #000;
+  }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; max-width: 94vw; }
+  .ctrl {
+    background: #2e2e3a; border: 1px solid #4a4a5a; color: #eee;
+    font-size: 17px; font-family: inherit;
+    padding: 13px 28px; border-radius: 12px; cursor: pointer; text-decoration: none;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .ctrl:active { background: #44445a; }
+  .ctrl.primary { background: #ef9a5b; border-color: #ef9a5b; color: #1a1a1a; font-weight: bold; }
+  #camError { color: #e88; max-width: 90vw; text-align: center; display: none; font-size: 14px; }
+
+  #qrBox { background: #fff; padding: 22px; border-radius: 18px; display: none; }
+  #qrBox img { display: block; width: 300px; height: 300px; image-rendering: pixelated; }
+  #spinner {
+    width: 56px; height: 56px;
+    border: 5px solid #333; border-top-color: #ef9a5b;
+    border-radius: 50%; animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #sendMsg { font-size: 18px; text-align: center; line-height: 1.6; max-width: 90vw; }
+  #sendMsg small { color: #889; font-size: 13px; }
+  #urlText { font-size: 12px; color: #667; word-break: break-all; max-width: 70vw; text-align: center; }
 
   @media (max-width: 760px) {
     #toolbar { gap: 3px; padding: 6px 6px; }
@@ -173,22 +227,25 @@
 
 <div id="stage"><canvas id="c"></canvas></div>
 
-<!-- 상단: 주요 기능만 한 줄로. 좁은 화면에선 라벨이 숨고 아이콘만 남음 -->
+<!-- 상단 툴바 -->
 <div id="toolbar">
   <div class="group">
-    <button id="btnOpen" title="이미지 열기 / 카메라 (Ctrl+O)"><span class="ic">🖼</span><span class="lbl">이미지 열기</span></button>
+    <button id="btnCam" title="카메라로 촬영"><span class="ic">📷</span><span class="lbl">카메라</span></button>
+    <button id="btnOpen" title="이미지 열기 (Ctrl+O)"><span class="ic">🖼</span><span class="lbl">이미지 열기</span></button>
     <button id="btnSave" title="PNG로 저장 (Ctrl+S)"><span class="ic">💾</span><span class="lbl">저장</span></button>
+    <button id="btnSend" title="QR로 핸드폰에 전송"><span class="ic">📱</span><span class="lbl">보내기</span></button>
   </div>
   <div class="group">
-    <button id="btnAll" title="사진 전체를 삼각형으로 변환"><span class="ic">🔺</span><span class="lbl">전체 변환</span></button>
-    <button id="btnReset" title="원본 사진으로 되돌리기"><span class="ic">↺</span><span class="lbl">원본</span></button>
+    <button id="btnAll" title="사진 전체를 삼각형으로 변환(애니메이션)"><span class="ic">🔺</span><span class="lbl">전체 변환</span></button>
+    <button id="btnErase" title="문지른 부분만 원본 사진으로 되돌리기"><span class="ic">🧽</span><span class="lbl">원본 브러시</span></button>
+    <button id="btnReset" title="전체를 원본 사진으로 되돌리기"><span class="ic">↺</span><span class="lbl">원본</span></button>
   </div>
   <div class="group">
     <button id="btnUndo" title="실행취소 (Ctrl+Z)"><span class="ic">↶</span><span class="lbl">실행취소</span></button>
     <button id="btnRedo" title="재실행 (Ctrl+Y)"><span class="ic">↷</span><span class="lbl">재실행</span></button>
   </div>
   <div class="group">
-    <button id="btnOptions" title="변환 영역·삼각형 크기 옵션"><span class="ic">⚙</span><span class="lbl">옵션</span></button>
+    <button id="btnOptions" title="변환 영역·삼각형 크기·스타일 옵션"><span class="ic">⚙</span><span class="lbl">옵션</span></button>
     <button id="btnClose" title="닫기"><span class="ic">✕</span><span class="lbl">닫기</span></button>
   </div>
 </div>
@@ -204,6 +261,16 @@
     <label>삼각형 크기 <input type="range" id="cellS" min="12" max="140" step="2" value="46"><span class="val" id="cellSVal">46</span></label>
     <label>불규칙도 <input type="range" id="jitter" min="0" max="0.9" step="0.05" value="0.45"><span class="val" id="jitterVal">0.45</span></label>
   </div>
+  <div class="opt-row">
+    <span style="opacity:.7">스타일:</span>
+    <span class="seg" id="styleSeg">
+      <button data-style="fill" class="on">채움</button>
+      <button data-style="edge">테두리</button>
+      <button data-style="wire">와이어</button>
+      <button data-style="gray">흑백</button>
+    </span>
+    <button id="btnAnim" class="on" title="전체 변환 시 삼각형이 퍼지는 애니메이션">✨ 애니메이션</button>
+  </div>
 </div>
 
 <div id="showTab">▼ 메뉴</div>
@@ -211,6 +278,34 @@
 <div id="cursor"></div>
 <div id="hint">사진을 클릭하거나 드래그하면 삼각형으로 변환돼요</div>
 <input type="file" id="fileInput" accept="image/*">
+
+<!-- 카메라 오버레이 -->
+<div class="overlay" id="ovCam">
+  <video id="video" autoplay playsinline muted></video>
+  <p id="camError"></p>
+  <div class="row">
+    <button class="ctrl" id="btnCamCancel">← 취소</button>
+    <button class="ctrl primary" id="btnShoot" style="font-size:20px; padding:15px 48px">📷 촬영</button>
+    <button class="ctrl" id="btnFlip">🔄 카메라 전환</button>
+  </div>
+</div>
+
+<!-- 전송/QR 오버레이 -->
+<div class="overlay" id="ovSend">
+  <div id="spinner"></div>
+  <div id="qrBox"><img id="qrImg" alt="QR"></div>
+  <div id="sendMsg">업로드 중...</div>
+  <div class="row" id="shareRow" style="display:none">
+    <a class="ctrl primary" id="btnOpenPhoto" target="_blank" rel="noopener">📷 사진 열기</a>
+    <button class="ctrl" id="btnShare" style="display:none">↗ 공유하기</button>
+    <button class="ctrl" id="btnCopyLink">📋 링크 복사</button>
+  </div>
+  <div id="urlText"></div>
+  <div class="row">
+    <button class="ctrl" id="btnRetry" style="display:none">🔄 다시 시도</button>
+    <button class="ctrl primary" id="btnSendClose">✓ 돌아가기</button>
+  </div>
+</div>
 
 <script>
 (() => {
@@ -221,7 +316,7 @@
 
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d');
-  // 원본 사진을 담아 두는 오프스크린 캔버스(색 샘플링용)
+  // 원본 사진을 담아 두는 오프스크린 캔버스(색 샘플링·부분 되돌리기용)
   const src = document.createElement('canvas');
   const sctx = src.getContext('2d', { willReadFrequently: true });
   let srcData = null;            // 원본 픽셀(Uint8ClampedArray)
@@ -233,9 +328,12 @@
 
   // ── 설정값 ────────────────────────────────────────────────
   const cfg = {
-    brushR: 110,   // 변환 영역 크기(반경, px) — alt.3
-    cellS: 46,     // 삼각형 셀 크기(px)
-    jitter: 0.45,  // 격자 꼭짓점 흔들림 정도(0=규칙적, 0.9=매우 불규칙)
+    brushR: 110,      // 변환 영역 크기(반경, px)
+    cellS: 46,        // 삼각형 셀 크기(px)
+    jitter: 0.45,     // 격자 꼭짓점 흔들림(0=규칙적, 0.9=매우 불규칙)
+    style: 'fill',    // fill | edge | wire | gray
+    erase: false,     // 원본 브러시(부분 되돌리기) 모드
+    animate: true,    // 전체 변환 애니메이션
   };
 
   // ── 상태 ──────────────────────────────────────────────────
@@ -247,7 +345,7 @@
   // ── Undo / Redo ───────────────────────────────────────────
   const undoStack = [];
   const redoStack = [];
-  const MAX_HISTORY = 25;
+  const MAX_HISTORY = 20;
 
   function snapshot() {
     undoStack.push({ img: ctx.getImageData(0, 0, W, H), cells: new Set(painted) });
@@ -276,9 +374,10 @@
     $('btnUndo').disabled = !undoStack.length;
     $('btnRedo').disabled = !redoStack.length;
   }
+  function resetHistory() { undoStack.length = 0; redoStack.length = 0; updateHistoryButtons(); }
 
   // ── 격자 꼭짓점 해시(결정적 의사난수) ─────────────────────
-  // 같은 (i,j)는 항상 같은 흔들림을 가지므로 인접 셀이 꼭짓점을 공유 → 이음새 없음
+  // 같은 (i,j)는 항상 같은 흔들림 → 인접 셀이 꼭짓점을 공유 → 이음새 없음
   function hash(i, j) {
     let h = (i * 73856093) ^ (j * 19349663);
     h = Math.imul(h ^ (h >>> 13), 1274126177);
@@ -307,33 +406,54 @@
   function fillTri(a, b, c) {
     const cx = (a[0] + b[0] + c[0]) / 3;
     const cy = (a[1] + b[1] + c[1]) / 3;
-    const col = sampleColor(cx, cy);
-    const style = `rgb(${col[0]},${col[1]},${col[2]})`;
+    let col = sampleColor(cx, cy);
+    let r = col[0], g = col[1], bl = col[2];
+    if (cfg.style === 'gray') { const y = (r * 0.299 + g * 0.587 + bl * 0.114) | 0; r = g = bl = y; }
+    const style = `rgb(${r},${g},${bl})`;
     ctx.beginPath();
     ctx.moveTo(a[0], a[1]);
     ctx.lineTo(b[0], b[1]);
     ctx.lineTo(c[0], c[1]);
     ctx.closePath();
-    ctx.fillStyle = style;
-    ctx.fill();
-    // 같은 색으로 살짝 덧칠해 셀 사이 미세한 이음새(안티앨리어싱 틈) 제거
-    ctx.strokeStyle = style;
-    ctx.lineWidth = 1;
     ctx.lineJoin = 'round';
-    ctx.stroke();
+    if (cfg.style === 'wire') {
+      ctx.fillStyle = '#141414';
+      ctx.fill();
+      ctx.strokeStyle = style;
+      ctx.lineWidth = 1.3;
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = style;
+      ctx.fill();
+      // edge: 어두운 테두리로 로우폴리 강조 / 그 외: 같은 색으로 미세 이음새 제거
+      ctx.strokeStyle = (cfg.style === 'edge') ? 'rgba(0,0,0,0.4)' : style;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
   }
 
-  // 셀 (i,j)을 삼각형 2개로 변환해서 그림
+  // 셀 (i,j)을 삼각형 2개로 변환
   function drawCell(i, j) {
     const A = vert(i, j), B = vert(i + 1, j), C = vert(i, j + 1), D = vert(i + 1, j + 1);
-    // 대각선 방향을 셀마다 번갈아 → 더 자연스러운 모자익
     if ((i + j) & 1) { fillTri(A, B, D); fillTri(A, D, C); }
     else { fillTri(A, B, C); fillTri(B, D, C); }
   }
 
+  // 이미 변환된 셀 전체를 현재 스타일로 다시 그림(스타일 변경 시)
+  function reRenderAll() {
+    if (!hasImage) return;
+    ctx.drawImage(src, 0, 0);
+    painted.forEach(k => {
+      const p = k.indexOf(',');
+      drawCell(+k.slice(0, p), +k.slice(p + 1));
+    });
+  }
+
+  // ── 변환 / 되돌리기 ───────────────────────────────────────
   // 커서 주변 변환 영역 안의 셀들을 변환
   function paintAt(x, y) {
     if (!hasImage) return;
+    if (cfg.erase) { eraseAt(x, y); return; }
     const cs = cfg.cellS, r = cfg.brushR;
     const i0 = Math.floor((x - r) / cs), i1 = Math.floor((x + r) / cs);
     const j0 = Math.floor((y - r) / cs), j1 = Math.floor((y + r) / cs);
@@ -343,7 +463,7 @@
         if (i < 0 || j < 0) continue;
         const ccx = (i + 0.5) * cs, ccy = (j + 0.5) * cs;
         const dx = ccx - x, dy = ccy - y;
-        if (dx * dx + dy * dy > r2) continue;   // 원형 브러시
+        if (dx * dx + dy * dy > r2) continue;
         const key = i + ',' + j;
         if (painted.has(key)) continue;
         painted.add(key);
@@ -353,23 +473,65 @@
     }
   }
 
-  // 전체 변환
-  function paintAll() {
-    if (!hasImage) return;
-    snapshot();
-    const cs = cfg.cellS;
-    const ci = Math.ceil(W / cs), cj = Math.ceil(H / cs);
-    for (let i = 0; i < ci; i++)
-      for (let j = 0; j < cj; j++) {
-        const key = i + ',' + j;
-        if (painted.has(key)) continue;
-        painted.add(key);
-        drawCell(i, j);
+  // 원본 브러시: 문지른 원형 영역을 원본 사진으로 복원(부분 되돌리기)
+  function eraseAt(x, y) {
+    const r = cfg.brushR;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(src, 0, 0);
+    ctx.restore();
+    // 영역 안 셀은 변환 목록에서 제거(다시 변환 가능)
+    const cs = cfg.cellS, r2 = r * r;
+    const i0 = Math.floor((x - r) / cs), i1 = Math.floor((x + r) / cs);
+    const j0 = Math.floor((y - r) / cs), j1 = Math.floor((y + r) / cs);
+    for (let i = i0; i <= i1; i++)
+      for (let j = j0; j <= j1; j++) {
+        const ccx = (i + 0.5) * cs, ccy = (j + 0.5) * cs;
+        const dx = ccx - x, dy = ccy - y;
+        if (dx * dx + dy * dy <= r2) painted.delete(i + ',' + j);
       }
     dirty = true;
   }
 
-  // 원본으로 되돌리기
+  // 전체 변환 — 애니메이션(중앙부터 삼각형이 퍼짐) 또는 즉시
+  let animRunning = false;
+  function paintAll() {
+    if (!hasImage || animRunning) return;
+    snapshot();
+    const cs = cfg.cellS;
+    const ci = Math.ceil(W / cs), cj = Math.ceil(H / cs);
+    const cx = W / 2, cy = H / 2;
+    const cells = [];
+    for (let i = 0; i < ci; i++)
+      for (let j = 0; j < cj; j++) {
+        const key = i + ',' + j;
+        if (painted.has(key)) continue;
+        const px = (i + 0.5) * cs, py = (j + 0.5) * cs;
+        cells.push({ i, j, d: (px - cx) * (px - cx) + (py - cy) * (py - cy) });
+      }
+    if (!cells.length) return;
+
+    if (!cfg.animate) {
+      cells.forEach(c => { painted.add(c.i + ',' + c.j); drawCell(c.i, c.j); });
+      dirty = true;
+      return;
+    }
+    cells.sort((a, b) => a.d - b.d);   // 중앙에서 바깥으로
+    let idx = 0;
+    const perFrame = Math.max(6, Math.ceil(cells.length / 45));   // ≈0.75초
+    animRunning = true;
+    function step() {
+      const end = Math.min(cells.length, idx + perFrame);
+      for (; idx < end; idx++) { const c = cells[idx]; painted.add(c.i + ',' + c.j); drawCell(c.i, c.j); }
+      if (idx < cells.length) requestAnimationFrame(step);
+      else { animRunning = false; dirty = true; }
+    }
+    requestAnimationFrame(step);
+  }
+
+  // 전체 원본으로 되돌리기
   function resetImage() {
     if (!hasImage) return;
     if (painted.size && dirty && !confirm('변환을 모두 지우고 원본으로 되돌릴까요?')) return;
@@ -400,17 +562,14 @@
     const p = getPos(e);
     paintAt(p.x, p.y);
   }
-  function pointerUp() {
-    isDrawing = false;
-  }
+  function pointerUp() { isDrawing = false; }
 
   // 터치 기기 여부 — 터치에서는 합성 마우스 이벤트로 원이 멈춰버리므로 분리 처리
   const TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
   let lastCX = window.innerWidth / 2, lastCY = window.innerHeight / 2;
   let hideTimer = null;
 
-  // 변환 영역 크기 원(브러시 미리보기)을 화면 좌표에 표시
-  // autoHide=true 면 잠시 보였다가 사라짐(슬라이더로 크기 조절할 때 미리보기용)
+  // 변환 영역 크기 원(브러시 미리보기) 표시. autoHide=true면 잠시 후 사라짐
   function showCursor(clientX, clientY, autoHide) {
     lastCX = clientX; lastCY = clientY;
     const rc = canvas.getBoundingClientRect();
@@ -420,6 +579,7 @@
     cursor.style.height = d + 'px';
     cursor.style.left = clientX + 'px';
     cursor.style.top = clientY + 'px';
+    cursor.classList.toggle('erase', cfg.erase);
     cursor.style.display = hasImage ? 'block' : 'none';
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
     if (autoHide) hideTimer = setTimeout(hideCursor, 900);
@@ -429,17 +589,17 @@
     if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
   }
 
-  // ── 마우스(데스크톱) ──
+  // 마우스(데스크톱)
   canvas.addEventListener('mousedown', e => { if (TOUCH) return; pointerDown(e); });
   window.addEventListener('mousemove', e => {
-    if (TOUCH) return;               // 터치 기기의 합성 마우스 이벤트 무시
+    if (TOUCH) return;
     showCursor(e.clientX, e.clientY);
     pointerMove(e);
   });
-  window.addEventListener('mouseup', e => { if (TOUCH) return; pointerUp(); });
+  window.addEventListener('mouseup', () => { if (!TOUCH) pointerUp(); });
   canvas.addEventListener('mouseleave', () => { if (!TOUCH) hideCursor(); });
 
-  // ── 터치(키오스크/모바일) — 누르고 있는 동안만 원 표시, 떼면 사라짐 ──
+  // 터치(키오스크/모바일) — 누르는 동안만 원 표시, 떼면 사라짐
   canvas.addEventListener('touchstart', e => {
     e.preventDefault();
     const t = e.touches[0];
@@ -458,7 +618,11 @@
     hideCursor();
   }, { passive: false });
 
-  // ── 캔버스 초기화(이미지 없을 때 안내 화면) ───────────────
+  // ── 캔버스 크기 / 안내 화면 ──────────────────────────────
+  function setCanvasSize() {
+    canvas.width = W; canvas.height = H;
+    src.width = W; src.height = H;
+  }
   function drawPlaceholder() {
     W = 1280; H = 800;
     setCanvasSize();
@@ -473,14 +637,29 @@
     ctx.font = '600 40px "Malgun Gothic", sans-serif';
     ctx.fillText('🔺 삼각형 모자익', W / 2, H / 2 - 30);
     ctx.font = '22px "Malgun Gothic", sans-serif';
-    ctx.fillText('[이미지 열기]로 사진을 불러오세요', W / 2, H / 2 + 30);
+    ctx.fillText('카메라로 찍거나 [이미지 열기]로 사진을 불러오세요', W / 2, H / 2 + 30);
     hasImage = false;
     fit();
   }
 
-  function setCanvasSize() {
-    canvas.width = W; canvas.height = H;
-    src.width = W; src.height = H;
+  // 새 원본 사진을 받아 캔버스/샘플링 버퍼에 세팅
+  function loadFromImage(imgOrCanvas, iw, ih, mirror) {
+    const s = Math.min(1, MAX_DIM / Math.max(iw, ih));
+    W = Math.max(1, Math.round(iw * s));
+    H = Math.max(1, Math.round(ih * s));
+    setCanvasSize();
+    sctx.save();
+    sctx.clearRect(0, 0, W, H);
+    if (mirror) { sctx.translate(W, 0); sctx.scale(-1, 1); }
+    sctx.drawImage(imgOrCanvas, 0, 0, W, H);
+    sctx.restore();
+    srcData = sctx.getImageData(0, 0, W, H).data;
+    ctx.drawImage(src, 0, 0);
+    painted.clear();
+    resetHistory();
+    hasImage = true;
+    dirty = false;
+    fit();
   }
 
   // ── 이미지 열기 ───────────────────────────────────────────
@@ -491,45 +670,151 @@
     if (!f) return;
     const img = new Image();
     img.onload = () => {
-      // 이미지 비율 유지, 최대 변을 MAX_DIM으로 제한
-      let iw = img.width, ih = img.height;
-      const s = Math.min(1, MAX_DIM / Math.max(iw, ih));
-      W = Math.max(1, Math.round(iw * s));
-      H = Math.max(1, Math.round(ih * s));
-      setCanvasSize();
-      // 원본을 src/표시 캔버스에 모두 그림
-      sctx.clearRect(0, 0, W, H);
-      sctx.drawImage(img, 0, 0, W, H);
-      srcData = sctx.getImageData(0, 0, W, H).data;
-      ctx.drawImage(src, 0, 0);
-      painted.clear();
-      undoStack.length = 0;
-      redoStack.length = 0;
-      updateHistoryButtons();
-      hasImage = true;
-      dirty = false;
+      loadFromImage(img, img.width, img.height, false);
       URL.revokeObjectURL(img.src);
-      fit();
     };
     img.src = URL.createObjectURL(f);
     fileInput.value = '';
   });
 
+  // ── 카메라 ────────────────────────────────────────────────
+  const video = $('video');
+  let stream = null;
+  let facing = 'user';
+
+  async function startCamera() {
+    $('ovCam').classList.add('active');
+    $('camError').style.display = 'none';
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: facing },
+        audio: false
+      });
+      video.srcObject = stream;
+      video.setAttribute('playsinline', '');
+      video.muted = true;
+      video.style.transform = (facing === 'user') ? 'scaleX(-1)' : 'none';
+      try { await video.play(); } catch (e) {}
+      if (!video.videoWidth) {
+        await new Promise(res => {
+          const done = () => { video.removeEventListener('loadedmetadata', done); res(); };
+          video.addEventListener('loadedmetadata', done);
+          setTimeout(done, 3000);
+        });
+      }
+    } catch (err) {
+      const e = $('camError');
+      e.style.display = 'block';
+      e.textContent = '카메라를 사용할 수 없습니다: ' + err.message +
+        ' (브라우저 카메라 권한, https/localhost 여부를 확인하세요)';
+    }
+  }
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    video.srcObject = null;
+  }
+  function closeCamera() { stopCamera(); $('ovCam').classList.remove('active'); }
+  async function flipCamera() {
+    const prev = facing;
+    facing = (facing === 'user') ? 'environment' : 'user';
+    stopCamera();
+    await startCamera();
+    if (!stream) { facing = prev; await startCamera(); }
+  }
+  function shoot() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) return;
+    loadFromImage(video, vw, vh, facing === 'user');   // 전면 카메라는 좌우 반전 보정
+    closeCamera();
+  }
+
   // ── 저장 ──────────────────────────────────────────────────
+  function timeStamp() {
+    const t = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}_${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}`;
+  }
   function saveImage() {
     if (!hasImage) { openImage(); return; }
     const a = document.createElement('a');
-    const t = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    a.download = `삼각형모자익_${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}_${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}.png`;
+    a.download = `삼각형모자익_${timeStamp()}.png`;
     a.href = canvas.toDataURL('image/png');
     a.click();
     dirty = false;
   }
 
+  // ── 보내기(업로드 → QR) ───────────────────────────────────
+  const UPLOAD_TIMEOUT_MS = 15000;
+  let lastShareUrl = null;
+  function xhrUpload(url, fd) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.timeout = UPLOAD_TIMEOUT_MS;
+      xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve(xhr.responseText) : reject(new Error('HTTP ' + xhr.status));
+      xhr.onerror = () => reject(new Error('네트워크 오류'));
+      xhr.ontimeout = () => reject(new Error('시간 초과'));
+      xhr.send(fd);
+    });
+  }
+  async function uploadLitterbox(blob, filename) {
+    const fd = new FormData();
+    fd.append('reqtype', 'fileupload');
+    fd.append('time', '72h');
+    fd.append('fileToUpload', blob, filename);
+    const url = (await xhrUpload('https://litterbox.catbox.moe/resources/internals/api.php', fd)).trim();
+    if (!/^https?:\/\/\S+$/.test(url)) throw new Error(url || '업로드 실패');
+    return { url, expiry: '72시간' };
+  }
+  async function uploadTmpfiles(blob, filename) {
+    const fd = new FormData();
+    fd.append('file', blob, filename);
+    const json = JSON.parse(await xhrUpload('https://tmpfiles.org/api/v1/upload', fd));
+    if (json.status !== 'success') throw new Error(json.message || '업로드 실패');
+    return { url: json.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/'), expiry: '60분' };
+  }
+  async function uploadForShare(blob, filename) {
+    const errors = [];
+    try { return await uploadLitterbox(blob, filename); } catch (e) { errors.push('litterbox: ' + e.message); }
+    try { return await uploadTmpfiles(blob, filename); } catch (e) { errors.push('tmpfiles: ' + e.message); }
+    throw new Error(errors.join(' / ') || '업로드 실패');
+  }
+
+  async function send() {
+    if (!hasImage) { alert('먼저 사진을 불러오세요.'); return; }
+    $('ovSend').classList.add('active');
+    $('spinner').style.display = 'block';
+    $('qrBox').style.display = 'none';
+    $('btnRetry').style.display = 'none';
+    $('shareRow').style.display = 'none';
+    $('sendMsg').innerHTML = '업로드 중...';
+    $('urlText').textContent = '';
+    try {
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.9));
+      const { url, expiry } = await uploadForShare(blob, `triangle_${timeStamp()}.jpg`);
+      const qr = qrcode(0, 'M');
+      qr.addData(url);
+      qr.make();
+      $('qrImg').src = qr.createDataURL(8, 8);
+      $('spinner').style.display = 'none';
+      $('qrBox').style.display = 'block';
+      $('sendMsg').innerHTML = '📱 QR을 스캔하거나 아래 버튼으로 열기/공유<br><small>링크는 ' + expiry + ' 동안 유효합니다</small>';
+      lastShareUrl = url;
+      $('btnOpenPhoto').href = url;
+      $('shareRow').style.display = 'flex';
+      $('btnShare').style.display = (navigator.share ? '' : 'none');
+      $('urlText').textContent = url;
+    } catch (err) {
+      $('spinner').style.display = 'none';
+      $('btnRetry').style.display = '';
+      $('sendMsg').innerHTML = '⚠ 업로드에 실패했습니다<br><small>' + err.message + '<br>인터넷 연결을 확인하고 다시 시도하거나 [저장]을 이용하세요</small>';
+    }
+  }
+
   // ── 닫기 ──────────────────────────────────────────────────
   function closeApp() {
     if (dirty && !confirm('저장하지 않은 변환이 있습니다. 닫을까요?')) return;
+    stopCamera();
     location.href = 'index.html';
   }
 
@@ -537,18 +822,73 @@
   $('brushR').addEventListener('input', e => {
     cfg.brushR = +e.target.value;
     $('brushRVal').textContent = e.target.value;
-    showCursor(lastCX, lastCY, true);   // 크기 변경 즉시 원 미리보기(잠시 후 사라짐)
+    showCursor(lastCX, lastCY, true);   // 크기 변경 즉시 원 미리보기
   });
   $('cellS').addEventListener('input',  e => { cfg.cellS = +e.target.value;  $('cellSVal').textContent = e.target.value; });
   $('jitter').addEventListener('input', e => { cfg.jitter = +e.target.value; $('jitterVal').textContent = e.target.value; });
 
+  // 스타일 선택
+  $('styleSeg').querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => {
+      $('styleSeg').querySelectorAll('button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+      cfg.style = b.dataset.style;
+      reRenderAll();          // 이미 변환된 부분도 새 스타일로 다시 그림
+      if (painted.size) dirty = true;
+    });
+  });
+  $('btnAnim').addEventListener('click', () => {
+    cfg.animate = !cfg.animate;
+    $('btnAnim').classList.toggle('on', cfg.animate);
+  });
+
+  // 버튼 연결
+  $('btnCam').addEventListener('click', startCamera);
   $('btnOpen').addEventListener('click', openImage);
   $('btnSave').addEventListener('click', saveImage);
+  $('btnSend').addEventListener('click', send);
   $('btnAll').addEventListener('click', paintAll);
   $('btnReset').addEventListener('click', resetImage);
+  $('btnErase').addEventListener('click', () => {
+    cfg.erase = !cfg.erase;
+    $('btnErase').classList.toggle('on', cfg.erase);
+    $('hint').textContent = cfg.erase
+      ? '문지른 부분이 원본 사진으로 되돌아갑니다'
+      : '사진을 클릭하거나 드래그하면 삼각형으로 변환돼요';
+  });
   $('btnUndo').addEventListener('click', undo);
   $('btnRedo').addEventListener('click', redo);
   $('btnClose').addEventListener('click', closeApp);
+
+  // 카메라 오버레이 버튼
+  $('btnShoot').addEventListener('click', shoot);
+  $('btnFlip').addEventListener('click', flipCamera);
+  $('btnCamCancel').addEventListener('click', closeCamera);
+
+  // 전송 오버레이 버튼
+  $('btnRetry').addEventListener('click', send);
+  $('btnSendClose').addEventListener('click', () => $('ovSend').classList.remove('active'));
+  $('btnCopyLink').addEventListener('click', async () => {
+    if (!lastShareUrl) return;
+    let ok = false;
+    try { await navigator.clipboard.writeText(lastShareUrl); ok = true; }
+    catch (e) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = lastShareUrl; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (e2) {}
+    }
+    const b = $('btnCopyLink'), prev = b.textContent;
+    b.textContent = ok ? '✓ 복사됨' : '✗ 복사 실패';
+    setTimeout(() => { b.textContent = prev; }, 1500);
+  });
+  $('btnShare').addEventListener('click', async () => {
+    if (!lastShareUrl || !navigator.share) return;
+    try { await navigator.share({ title: '삼각형 모자익', url: lastShareUrl }); } catch (e) {}
+  });
 
   // 전체화면
   const docEl = document.documentElement;
