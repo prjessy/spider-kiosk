@@ -132,10 +132,11 @@
 
   label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
   input[type="range"] { width: 70px; accent-color: #f0b27a; touch-action: none; }
-  #brushR, #cellS, #jitter { width: 200px; height: 26px; }
+  #brushR, #cellS, #jitter, #detail { width: 200px; height: 26px; }
   .val { width: 38px; text-align: right; color: #f0b27a; font-variant-numeric: tabular-nums; }
   .seg { display: inline-flex; gap: 4px; }
   .seg button.on { background: #ef9a5b; border-color: #ef9a5b; color: #fff; }
+  .seg.disabled { opacity: 0.35; pointer-events: none; }
 
   #showTab {
     position: fixed; top: 0; left: 50%;
@@ -205,7 +206,7 @@
     #toolbar button { padding: 7px 9px; }
     .group { padding: 0 5px; gap: 3px; }
     .group:last-child { margin-left: 0; }
-    #brushR, #cellS, #jitter { width: 160px; }
+    #brushR, #cellS, #jitter, #detail { width: 160px; }
     input[type="range"] { width: 130px; }
   }
 </style>
@@ -261,11 +262,13 @@
       <button data-shape="h">⬡ 육각형</button>
       <button data-shape="d">⚫ 점</button>
     </span>
+    <button id="btnAdaptive" title="색이 단조로운 곳은 큰 삼각형, 디테일한 곳은 작은 삼각형으로 (로우폴리)">🔻 적응형</button>
   </div>
   <div class="opt-row">
     <label>변환 영역 크기 <input type="range" id="brushR" min="15" max="400" step="5" value="50"><span class="val" id="brushRVal">50</span></label>
-    <label>모자익 크기 <input type="range" id="cellS" min="12" max="140" step="2" value="46"><span class="val" id="cellSVal">46</span></label>
-    <label>불규칙도 <input type="range" id="jitter" min="0" max="0.9" step="0.05" value="0.45"><span class="val" id="jitterVal">0.45</span></label>
+    <label><span id="cellLabelText">모자익 크기</span> <input type="range" id="cellS" min="12" max="140" step="2" value="46"><span class="val" id="cellSVal">46</span></label>
+    <label id="jitterWrap">불규칙도 <input type="range" id="jitter" min="0" max="0.9" step="0.05" value="0.45"><span class="val" id="jitterVal">0.45</span></label>
+    <label id="detailWrap" style="display:none">디테일 민감도 <input type="range" id="detail" min="1" max="10" step="1" value="5"><span class="val" id="detailVal">5</span></label>
   </div>
   <div class="opt-row">
     <span style="opacity:.7">스타일:</span>
@@ -345,6 +348,8 @@
     style: 'fill',    // fill | edge | wire | gray
     erase: false,     // 원본 브러시(부분 되돌리기)
     animate: true,    // 전체 변환 애니메이션
+    adaptive: false,  // 적응형(로우폴리): 단조로운 곳 큰 삼각형, 디테일 작은 삼각형
+    detailSens: 5,    // 디테일 민감도(1~10): 클수록 작은 삼각형 많아짐
   };
 
   // ── 상태 ──────────────────────────────────────────────────
@@ -478,7 +483,10 @@
       ctx.fill();
     }
   }
-  function drawTileKey(key) { const t = parseKey(key); drawTile(t.sh, t.i, t.j); }
+  function drawTileKey(key) {
+    if (key.charCodeAt(0) === 112) { drawTri(+key.slice(2)); return; }  // 'p:' = 로우폴리 삼각형
+    const t = parseKey(key); drawTile(t.sh, t.i, t.j);
+  }
 
   // 변환된 타일 전부 다시 그림(스타일 변경 시) — 각 타일은 저장된 모양 그대로
   function reRenderAll() {
@@ -487,10 +495,171 @@
     painted.forEach(drawTileKey);
   }
 
+  // ── 적응형(로우폴리) 삼각형 ───────────────────────────────
+  // 색이 단조로운 곳은 큰 삼각형, 에지(디테일) 많은 곳은 작은 삼각형.
+  // 1) 그래디언트(에지) 계산 → 2) 에지 많은 곳에 점 조밀 배치 → 3) 들로네 삼각분할
+  let triList = [];            // [{ pts:[[x,y]×3], cx, cy }]
+  let triBuckets = null;       // "bx,by" -> [삼각형 인덱스]
+  let gradMap = null;          // Float32Array — 정규화된 에지 강도(0~1)
+  const TRI_BUCKET = 48;
+
+  function buildGradient() {
+    gradMap = new Float32Array(W * H);
+    if (!srcData) return;
+    const lum = new Float32Array(W * H);
+    for (let p = 0, q = 0; p < W * H; p++, q += 4)
+      lum[p] = srcData[q] * 0.299 + srcData[q + 1] * 0.587 + srcData[q + 2] * 0.114;
+    const NORM = 1 / 1442;     // Sobel 최대 크기 ≈ √2·4·255
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const k = y * W + x;
+        const tl = lum[k - W - 1], tc = lum[k - W], tr = lum[k - W + 1];
+        const ml = lum[k - 1],                      mr = lum[k + 1];
+        const bl = lum[k + W - 1], bc = lum[k + W], br = lum[k + W + 1];
+        const gx = (tr + 2 * mr + br) - (tl + 2 * ml + bl);
+        const gy = (bl + 2 * bc + br) - (tl + 2 * tc + tr);
+        gradMap[k] = Math.sqrt(gx * gx + gy * gy) * NORM;
+      }
+    }
+  }
+  function gradAt(x, y) {
+    let ix = x | 0, iy = y | 0;
+    if (ix < 0) ix = 0; else if (ix >= W) ix = W - 1;
+    if (iy < 0) iy = 0; else if (iy >= H) iy = H - 1;
+    return gradMap[iy * W + ix];
+  }
+  function maxGradCell(x, y, step) {        // 셀 영역 내 최대 에지 강도
+    const h = step / 2, s = Math.max(2, step / 3);
+    let m = 0;
+    for (let yy = y - h; yy <= y + h; yy += s)
+      for (let xx = x - h; xx <= x + h; xx += s) { const g = gradAt(xx, yy); if (g > m) m = g; }
+    return m;
+  }
+
+  function buildLowPoly() {
+    triList = []; triBuckets = null;
+    if (!srcData) return;
+    buildGradient();
+    const base = Math.max(14, cfg.cellS);   // 단조로운 영역의 삼각형 크기
+    const sens = cfg.detailSens;            // 1~10
+    const thr1 = Math.max(0.04, 0.22 - sens * 0.016);
+    const thr2 = thr1 * 1.7;
+    const CAP = 5000;
+
+    const pts = [];
+    const seen = new Set();
+    const addPt = (x, y) => {
+      if (pts.length >= CAP) return;
+      x = x < 0 ? 0 : (x > W ? W : x);
+      y = y < 0 ? 0 : (y > H ? H : y);
+      const key = (x | 0) + ',' + (y | 0);
+      if (seen.has(key)) return;
+      seen.add(key); pts.push([x, y]);
+    };
+    // 모서리 + 테두리(직사각형 전체가 삼각형으로 덮이도록)
+    addPt(0, 0); addPt(W, 0); addPt(0, H); addPt(W, H);
+    for (let x = base; x < W; x += base) {
+      addPt(x + (hash(x, 1) - 0.5) * base * 0.4, 0);
+      addPt(x + (hash(x, 2) - 0.5) * base * 0.4, H);
+    }
+    for (let y = base; y < H; y += base) {
+      addPt(0, y + (hash(1, y) - 0.5) * base * 0.4);
+      addPt(W, y + (hash(2, y) - 0.5) * base * 0.4);
+    }
+    // 내부 기본 격자(단조로운 영역 → 큰 삼각형)
+    for (let y = base; y < H; y += base)
+      for (let x = base; x < W; x += base)
+        addPt(x + (hash(x, y) - 0.5) * base * 0.45, y + (hash(x + 7, y + 3) - 0.5) * base * 0.45);
+    // 디테일 레벨(에지 강한 곳 → 점 추가 → 작은 삼각형)
+    const levels = [{ step: base / 2, thr: thr1 }, { step: Math.max(7, base / 4), thr: thr2 }];
+    for (const lv of levels) {
+      const st = lv.step;
+      let stop = false;
+      for (let y = st; y < H && !stop; y += st)
+        for (let x = st; x < W; x += st) {
+          if (pts.length >= CAP) { stop = true; break; }
+          if (maxGradCell(x, y, st) > lv.thr)
+            addPt(x + (hash(x * 3, y) - 0.5) * st * 0.5, y + (hash(x, y * 3) - 0.5) * st * 0.5);
+        }
+    }
+
+    const tris = triangulate(pts);
+    triList = new Array(tris.length);
+    triBuckets = new Map();
+    const G = TRI_BUCKET;
+    for (let t = 0; t < tris.length; t++) {
+      const A = pts[tris[t][0]], B = pts[tris[t][1]], C = pts[tris[t][2]];
+      const cx = (A[0] + B[0] + C[0]) / 3, cy = (A[1] + B[1] + C[1]) / 3;
+      triList[t] = { pts: [A, B, C], cx, cy };
+      const bk = Math.floor(cx / G) + ',' + Math.floor(cy / G);
+      let arr = triBuckets.get(bk); if (!arr) { arr = []; triBuckets.set(bk, arr); } arr.push(t);
+    }
+  }
+  function ensureLowPoly() { if (cfg.adaptive && !triList.length && srcData) buildLowPoly(); }
+  function drawTri(idx) { const t = triList[idx]; if (t) fillPoly(t.pts); }
+
+  // 들로네 삼각분할 (Bowyer–Watson)
+  function triangulate(inPts) {
+    const n = inPts.length;
+    if (n < 3) return [];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of inPts) {
+      if (p[0] < minX) minX = p[0]; if (p[1] < minY) minY = p[1];
+      if (p[0] > maxX) maxX = p[0]; if (p[1] > maxY) maxY = p[1];
+    }
+    const dmax = Math.max(maxX - minX, maxY - minY) || 1;
+    const mx = (minX + maxX) / 2, my = (minY + maxY) / 2;
+    const P = inPts.slice();
+    const s = P.length;        // 슈퍼 삼각형 꼭짓점 시작 인덱스
+    P.push([mx - 20 * dmax, my - dmax], [mx, my + 20 * dmax], [mx + 20 * dmax, my - dmax]);
+    let tris = [mkTri(P, s, s + 1, s + 2)];
+    for (let ip = 0; ip < n; ip++) {
+      const px = P[ip][0], py = P[ip][1];
+      const edges = [];        // 평탄화된 [a,b, a,b, ...]
+      for (let t = tris.length - 1; t >= 0; t--) {
+        const tr = tris[t], ddx = px - tr.cx, ddy = py - tr.cy;
+        if (ddx * ddx + ddy * ddy < tr.r2) {     // 외접원 안 → 제거하고 에지 수집
+          edges.push(tr.a, tr.b, tr.b, tr.c, tr.c, tr.a);
+          tris[t] = tris[tris.length - 1]; tris.pop();
+        }
+      }
+      const m = edges.length / 2;
+      for (let i = 0; i < m; i++) {               // 두 번 나온 에지(내부) 제거 → 경계만
+        if (edges[i * 2] === -1) continue;
+        for (let j = i + 1; j < m; j++) {
+          if (edges[j * 2] === -1) continue;
+          if ((edges[i * 2] === edges[j * 2] && edges[i * 2 + 1] === edges[j * 2 + 1]) ||
+              (edges[i * 2] === edges[j * 2 + 1] && edges[i * 2 + 1] === edges[j * 2])) {
+            edges[i * 2] = -1; edges[j * 2] = -1; break;
+          }
+        }
+      }
+      for (let i = 0; i < m; i++)
+        if (edges[i * 2] !== -1) tris.push(mkTri(P, edges[i * 2], edges[i * 2 + 1], ip));
+    }
+    const out = [];
+    for (const tr of tris) if (tr.a < s && tr.b < s && tr.c < s) out.push([tr.a, tr.b, tr.c]);
+    return out;
+  }
+  function mkTri(P, a, b, c) {
+    const ax = P[a][0], ay = P[a][1], bx = P[b][0], by = P[b][1], cx = P[c][0], cy = P[c][1];
+    const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+    let ux, uy;
+    if (Math.abs(d) < 1e-9) { ux = (ax + bx + cx) / 3; uy = (ay + by + cy) / 3; }
+    else {
+      const a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+      ux = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d;
+      uy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d;
+    }
+    const r2 = (ax - ux) * (ax - ux) + (ay - uy) * (ay - uy);
+    return { a, b, c, cx: ux, cy: uy, r2 };
+  }
+
   // ── 변환 / 되돌리기 ───────────────────────────────────────
   function paintAt(x, y) {
     if (!hasImage) return;
     if (cfg.erase) { eraseAt(x, y); return; }
+    if (cfg.adaptive) { paintPolyAt(x, y); return; }
     const sh = cfg.shape, cs = cfg.cellS, r = cfg.brushR, r2 = r * r;
     let i0, i1, j0, j1;
     if (sh === 'h') {
@@ -515,6 +684,37 @@
       }
   }
 
+  // 적응형 브러시: 중심이 브러시 안에 든 로우폴리 삼각형을 변환
+  function paintPolyAt(x, y) {
+    ensureLowPoly();
+    if (!triBuckets) return;
+    const r = cfg.brushR, r2 = r * r, G = TRI_BUCKET;
+    const bx0 = Math.floor((x - r) / G), bx1 = Math.floor((x + r) / G);
+    const by0 = Math.floor((y - r) / G), by1 = Math.floor((y + r) / G);
+    for (let bx = bx0; bx <= bx1; bx++)
+      for (let by = by0; by <= by1; by++) {
+        const arr = triBuckets.get(bx + ',' + by);
+        if (!arr) continue;
+        for (const idx of arr) {
+          const t = triList[idx], dx = t.cx - x, dy = t.cy - y;
+          if (dx * dx + dy * dy > r2) continue;
+          const key = 'p:' + idx;
+          if (painted.has(key)) continue;
+          painted.add(key); drawTri(idx); dirty = true;
+        }
+      }
+  }
+
+  // 키 중심이 브러시 원 안에 드는지 (격자·로우폴리 모두 지원)
+  function keyHit(key, x, y, r2) {
+    if (key.charCodeAt(0) === 112) {                 // 'p:' = 로우폴리
+      const t = triList[+key.slice(2)]; if (!t) return false;
+      const dx = t.cx - x, dy = t.cy - y; return dx * dx + dy * dy <= r2;
+    }
+    const t = parseKey(key), c = tileCenter(t.sh, t.i, t.j);
+    const dx = c[0] - x, dy = c[1] - y; return dx * dx + dy * dy <= r2;
+  }
+
   // 원본 브러시: 원형 영역을 원본으로 복원 + 그 안 타일은 변환목록에서 제거
   function eraseAt(x, y) {
     const r = cfg.brushR, r2 = r * r;
@@ -524,13 +724,7 @@
     ctx.clip();
     ctx.drawImage(src, 0, 0);
     ctx.restore();
-    // 모양이 섞여 있을 수 있어 각 키의 중심으로 판정해 변환목록에서 제거
-    painted.forEach(key => {
-      const t = parseKey(key);
-      const c = tileCenter(t.sh, t.i, t.j);
-      const dx = c[0] - x, dy = c[1] - y;
-      if (dx * dx + dy * dy <= r2) painted.delete(key);
-    });
+    painted.forEach(key => { if (keyHit(key, x, y, r2)) painted.delete(key); });
     dirty = true;
   }
 
@@ -554,15 +748,28 @@
   let animRunning = false;
   function paintAll() {
     if (!hasImage || animRunning) return;
-    snapshot();
-    const sh = cfg.shape, cx = W / 2, cy = H / 2;
-    const cells = enumerateAll(sh).filter(c => !painted.has(K(sh, c.i, c.j)));
-    if (!cells.length) return;
-    if (!cfg.animate) {
-      cells.forEach(c => { painted.add(K(sh, c.i, c.j)); drawTile(sh, c.i, c.j); });
-      dirty = true;
-      return;
+    const cx = W / 2, cy = H / 2;
+    let cells, drawFn;
+    if (cfg.adaptive) {
+      ensureLowPoly();
+      cells = [];
+      for (let idx = 0; idx < triList.length; idx++) {
+        const key = 'p:' + idx;
+        if (painted.has(key)) continue;
+        const t = triList[idx];
+        cells.push({ key, draw: idx, cx: t.cx, cy: t.cy });
+      }
+      drawFn = c => drawTri(c.draw);
+    } else {
+      const sh = cfg.shape;
+      cells = enumerateAll(sh).filter(c => !painted.has(K(sh, c.i, c.j)))
+        .map(c => ({ key: K(sh, c.i, c.j), ci: c.i, cj: c.j, cx: c.cx, cy: c.cy }));
+      drawFn = c => drawTile(sh, c.ci, c.cj);
     }
+    if (!cells.length) return;
+    snapshot();
+    const apply = c => { painted.add(c.key); drawFn(c); };
+    if (!cfg.animate) { cells.forEach(apply); dirty = true; return; }
     cells.forEach(c => { c.d = (c.cx - cx) * (c.cx - cx) + (c.cy - cy) * (c.cy - cy); });
     cells.sort((a, b) => a.d - b.d);
     let idx = 0;
@@ -570,7 +777,7 @@
     animRunning = true;
     (function step() {
       const end = Math.min(cells.length, idx + perFrame);
-      for (; idx < end; idx++) { const c = cells[idx]; painted.add(K(sh, c.i, c.j)); drawTile(sh, c.i, c.j); }
+      for (; idx < end; idx++) apply(cells[idx]);
       if (idx < cells.length) requestAnimationFrame(step);
       else { animRunning = false; dirty = true; }
     })();
@@ -717,6 +924,8 @@
     resetHistory();
     hasImage = true;
     dirty = false;
+    triList = []; triBuckets = null; gradMap = null;
+    if (cfg.adaptive) buildLowPoly();
     fit();
   }
 
@@ -873,7 +1082,40 @@
     showCursor(lastCX, lastCY, true);
   });
   $('cellS').addEventListener('input', e => { cfg.cellS = +e.target.value; $('cellSVal').textContent = e.target.value; });
+  $('cellS').addEventListener('change', () => { if (cfg.adaptive) rebuildLowPoly(); });
   $('jitter').addEventListener('input', e => { cfg.jitter = +e.target.value; $('jitterVal').textContent = e.target.value; });
+  $('detail').addEventListener('input', e => { cfg.detailSens = +e.target.value; $('detailVal').textContent = e.target.value; });
+  $('detail').addEventListener('change', () => { if (cfg.adaptive) rebuildLowPoly(); });
+
+  // 적응형(로우폴리) 토글
+  function rebuildLowPoly() {
+    if (hasImage && painted.size) { ctx.drawImage(src, 0, 0); painted.clear(); dirty = false; }
+    resetHistory();                 // 삼각형 인덱스가 바뀌므로 이전 기록은 무효
+    triList = []; triBuckets = null;
+    buildLowPoly();
+  }
+  function setAdaptive(on) {
+    if (on === cfg.adaptive) return;
+    // 두 모드는 변환 키 체계가 달라 전환 시 현재 변환을 초기화
+    if (hasImage && painted.size) {
+      const msg = on ? '적응형으로 바꾸면 현재 변환이 초기화됩니다. 계속할까요?'
+                     : '일반 모드로 바꾸면 현재 변환이 초기화됩니다. 계속할까요?';
+      if (!confirm(msg)) return;
+      ctx.drawImage(src, 0, 0); painted.clear(); dirty = false;
+    }
+    resetHistory();                 // 모드 전환 시 변환 키 체계가 달라 기록 무효
+    cfg.adaptive = on;
+    $('btnAdaptive').classList.toggle('on', on);
+    $('cellLabelText').textContent = on ? '삼각형 기본 크기' : '모자익 크기';
+    $('detailWrap').style.display = on ? 'flex' : 'none';
+    $('jitterWrap').style.display = on ? 'none' : 'flex';
+    $('shapeSeg').classList.toggle('disabled', on);
+    $('hint').textContent = on
+      ? '‘전체 변환’ 또는 드래그 — 단조로운 곳은 큰 삼각형, 디테일한 곳은 작은 삼각형'
+      : SHAPE_HINT[cfg.shape];
+    if (on) { triList = []; ensureLowPoly(); }
+  }
+  $('btnAdaptive').addEventListener('click', () => setAdaptive(!cfg.adaptive));
 
   const SHAPE_HINT = {
     t: '사진을 클릭하거나 드래그하면 삼각형으로 변환돼요',
