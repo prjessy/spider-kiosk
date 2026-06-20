@@ -540,10 +540,11 @@
     triList = []; triBuckets = null;
     if (!srcData) return;
     buildGradient();
-    const base = Math.max(14, cfg.cellS);   // 단조로운 영역의 삼각형 크기(크게 유지)
+    const base = Math.max(14, cfg.cellS);   // 디테일 영역의 기준 크기
     const sens = cfg.detailSens;            // 1~10
-    const thr1 = Math.max(0.022, 0.135 - sens * 0.012);  // 낮을수록 디테일 영역 多
-    const CAP = 7000;
+    const thr1 = Math.max(0.016, 0.12 - sens * 0.011);   // 낮을수록 디테일 영역 多
+    const CAP = 8000;
+    const flatStep = base * 1.5;            // 단조로운 영역: 훨씬 큰 삼각형 → 극적 대비
 
     const pts = [];
     const seen = new Set();
@@ -557,23 +558,23 @@
     };
     // 모서리 + 테두리(직사각형 전체가 삼각형으로 덮이도록)
     addPt(0, 0); addPt(W, 0); addPt(0, H); addPt(W, H);
-    for (let x = base; x < W; x += base) {
-      addPt(x + (hash(x, 1) - 0.5) * base * 0.4, 0);
-      addPt(x + (hash(x, 2) - 0.5) * base * 0.4, H);
+    for (let x = flatStep; x < W; x += flatStep) {
+      addPt(x + (hash(x, 1) - 0.5) * flatStep * 0.4, 0);
+      addPt(x + (hash(x, 2) - 0.5) * flatStep * 0.4, H);
     }
-    for (let y = base; y < H; y += base) {
-      addPt(0, y + (hash(1, y) - 0.5) * base * 0.4);
-      addPt(W, y + (hash(2, y) - 0.5) * base * 0.4);
+    for (let y = flatStep; y < H; y += flatStep) {
+      addPt(0, y + (hash(1, y) - 0.5) * flatStep * 0.4);
+      addPt(W, y + (hash(2, y) - 0.5) * flatStep * 0.4);
     }
     // 내부 기본 격자(단조로운 영역 → 큰 삼각형)
-    for (let y = base; y < H; y += base)
-      for (let x = base; x < W; x += base)
-        addPt(x + (hash(x, y) - 0.5) * base * 0.45, y + (hash(x + 7, y + 3) - 0.5) * base * 0.45);
+    for (let y = flatStep; y < H; y += flatStep)
+      for (let x = flatStep; x < W; x += flatStep)
+        addPt(x + (hash(x, y) - 0.5) * flatStep * 0.45, y + (hash(x + 7, y + 3) - 0.5) * flatStep * 0.45);
     // 디테일 레벨(에지 강할수록 더 작은 삼각형) — 단계적으로 세분화해 대비를 크게
     const levels = [
-      { step: base / 2,              thr: thr1 },
-      { step: base / 4,              thr: thr1 * 2.0 },
-      { step: Math.max(6, base / 8), thr: thr1 * 3.6 },
+      { step: base * 0.6,              thr: thr1 },
+      { step: base * 0.32,             thr: thr1 * 1.9 },
+      { step: Math.max(5, base * 0.17), thr: thr1 * 3.4 },
     ];
     for (const lv of levels) {
       const st = lv.step;
@@ -599,7 +600,34 @@
     }
   }
   function ensureLowPoly() { if (cfg.adaptive && !triList.length && srcData) buildLowPoly(); }
-  function drawTri(idx) { const t = triList[idx]; if (t) fillPoly(t.pts); }
+
+  // 적응형 셀 한 개 그리기 — 모양(삼각형/점/사각형/육각형)에 따라, 셀 크기에 비례
+  function drawTri(idx) {
+    const t = triList[idx]; if (!t) return;
+    if (cfg.shape === 't') { fillPoly(t.pts); return; }
+    const A = t.pts[0], B = t.pts[1], C = t.pts[2], cx = t.cx, cy = t.cy;
+    let col = sampleColor(cx, cy), r = col[0], g = col[1], bl = col[2];
+    if (cfg.style === 'gray') { const y = (r * 0.299 + g * 0.587 + bl * 0.114) | 0; r = g = bl = y; }
+    // 어두운 그라우트(셀 영역을 삼각형으로 채움)
+    ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.lineTo(C[0], C[1]); ctx.closePath();
+    ctx.fillStyle = `rgb(${(r * 0.22) | 0},${(g * 0.22) | 0},${(bl * 0.22) | 0})`;
+    ctx.fill();
+    const area = Math.abs((B[0] - A[0]) * (C[1] - A[1]) - (C[0] - A[0]) * (B[1] - A[1])) * 0.5;
+    const L = Math.sqrt(area);                 // 셀 특성 크기 → 점·도형 크기에 비례
+    ctx.fillStyle = `rgb(${r},${g},${bl})`;
+    if (cfg.shape === 'd') {
+      ctx.beginPath(); ctx.arc(cx, cy, L * 0.62, 0, Math.PI * 2); ctx.fill();
+    } else if (cfg.shape === 's') {
+      const s = L * 0.96; ctx.fillRect(cx - s / 2, cy - s / 2, s, s);
+    } else if (cfg.shape === 'h') {
+      const R = L * 0.66; ctx.beginPath();
+      for (let k = 0; k < 6; k++) {
+        const a = Math.PI / 3 * k + Math.PI / 6, X = cx + R * Math.cos(a), Y = cy + R * Math.sin(a);
+        k ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+      }
+      ctx.closePath(); ctx.fill();
+    }
+  }
 
   // 들로네 삼각분할 (Bowyer–Watson)
   function triangulate(inPts) {
@@ -1090,12 +1118,41 @@
   $('detail').addEventListener('input', e => { cfg.detailSens = +e.target.value; $('detailVal').textContent = e.target.value; });
   $('detail').addEventListener('change', () => { if (cfg.adaptive) rebuildLowPoly(); });
 
-  // 적응형(로우폴리) 토글
+  // 현재 칠해진 영역을 저해상도 마스크로 캡처(삼각형 영역 기준)
+  function captureMask() {
+    const mw = Math.max(1, Math.round(W / 4)), mh = Math.max(1, Math.round(H / 4));
+    const mc = document.createElement('canvas'); mc.width = mw; mc.height = mh;
+    const mx = mc.getContext('2d');
+    mx.fillStyle = '#000'; mx.fillRect(0, 0, mw, mh);
+    mx.fillStyle = '#fff'; mx.scale(mw / W, mh / H);
+    painted.forEach(k => {
+      if (k.charCodeAt(0) !== 112) return;       // 'p:' 만
+      const t = triList[+k.slice(2)]; if (!t) return;
+      const A = t.pts[0], B = t.pts[1], C = t.pts[2];
+      mx.beginPath(); mx.moveTo(A[0], A[1]); mx.lineTo(B[0], B[1]); mx.lineTo(C[0], C[1]); mx.closePath(); mx.fill();
+    });
+    return { data: mx.getImageData(0, 0, mw, mh).data, mw, mh };
+  }
+
+  // 적응형(로우폴리) 재구성 — 크기/민감도가 바뀌어도 칠한 영역은 유지(마스크로 재적용)
   function rebuildLowPoly() {
-    if (hasImage && painted.size) { ctx.drawImage(src, 0, 0); painted.clear(); dirty = false; }
+    const mask = (hasImage && painted.size) ? captureMask() : null;
     resetHistory();                 // 삼각형 인덱스가 바뀌므로 이전 기록은 무효
     triList = []; triBuckets = null;
     buildLowPoly();
+    ctx.drawImage(src, 0, 0);
+    painted.clear();
+    if (mask) {                     // 이전에 칠한 영역에 해당하는 새 삼각형을 다시 칠함
+      const data = mask.data, mw = mask.mw, mh = mask.mh, sx = mw / W, sy = mh / H;
+      for (let idx = 0; idx < triList.length; idx++) {
+        const t = triList[idx];
+        let mxp = (t.cx * sx) | 0, myp = (t.cy * sy) | 0;
+        if (mxp < 0) mxp = 0; else if (mxp >= mw) mxp = mw - 1;
+        if (myp < 0) myp = 0; else if (myp >= mh) myp = mh - 1;
+        if (data[(myp * mw + mxp) * 4] > 128) { painted.add('p:' + idx); drawTri(idx); }
+      }
+    }
+    dirty = painted.size > 0;
   }
   function setAdaptive(on) {
     if (on === cfg.adaptive) return;
@@ -1116,7 +1173,6 @@
     $('cellLabelText').textContent = on ? '삼각형 기본 크기' : '모자익 크기';
     $('detailWrap').style.display = on ? 'flex' : 'none';
     $('jitterWrap').style.display = on ? 'none' : 'flex';
-    $('shapeSeg').classList.toggle('disabled', on);
     $('hint').textContent = on
       ? '‘전체 변환’ 또는 드래그 — 단조로운 곳은 큰 삼각형, 디테일한 곳은 작은 삼각형'
       : SHAPE_HINT[cfg.shape];
@@ -1135,6 +1191,7 @@
       b.classList.add('on');
       cfg.shape = b.dataset.shape;
       if (!cfg.erase) $('hint').textContent = SHAPE_HINT[cfg.shape];
+      if (cfg.adaptive && painted.size) { reRenderAll(); dirty = true; }   // 칠한 셀을 새 모양으로 다시 그림
     });
   });
   $('styleSeg').querySelectorAll('button').forEach(b => {
