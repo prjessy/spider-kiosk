@@ -449,28 +449,35 @@
     cursor.style.left = e.clientX + 'px';
     cursor.style.top = e.clientY + 'px';
   }
-  // 임시 진단: 어떤 포인터 입력이 들어오는지 화면 좌하단에 표시
+  // ── 임시 진단: 모든 입력(pointer/touch/mouse)을 종류별로 집계해 좌하단에 표시 ──
+  // 문서 전역(capture)에서 듣기 때문에, 펜 이벤트가 캔버스까지 못 오더라도 무조건 잡힘.
   const dbgEl = document.getElementById('dbg');
-  let dbgMoves = 0;
-  function dbg(t) { if (dbgEl) dbgEl.textContent = t; }
-  function pinfo(tag, e) { return tag + ' · ' + e.pointerType + ' · p=' + (e.pressure != null ? e.pressure.toFixed(2) : '?') + ' · btn=' + e.buttons; }
+  const C = { pd: {}, pm: {}, pc: 0, ts: 0, tm: 0, md: 0, mm: 0 };
+  const inc = (o, k) => { o[k] = (o[k] || 0) + 1; };
+  const fmt = o => { const k = Object.keys(o); return k.length ? k.map(t => t + ':' + o[t]).join(' ') : '-'; };
+  function renderDbg() {
+    if (!dbgEl) return;
+    dbgEl.textContent =
+      '펜 진단 — 펜으로 그어보세요\n' +
+      'pointerdown   ' + fmt(C.pd) + '\n' +
+      'pointermove   ' + fmt(C.pm) + '\n' +
+      'pointercancel ' + C.pc + '\n' +
+      'touch s/m ' + C.ts + '/' + C.tm + '  ·  mouse d/m ' + C.md + '/' + C.mm;
+  }
+  document.addEventListener('pointerdown',   e => { inc(C.pd, e.pointerType); renderDbg(); }, true);
+  document.addEventListener('pointermove',   e => { inc(C.pm, e.pointerType); renderDbg(); }, { capture: true, passive: true });
+  document.addEventListener('pointercancel', () => { C.pc++; renderDbg(); }, true);
+  document.addEventListener('touchstart',    () => { C.ts++; renderDbg(); }, { capture: true, passive: true });
+  document.addEventListener('touchmove',     () => { C.tm++; renderDbg(); }, { capture: true, passive: true });
+  document.addEventListener('mousedown',     () => { C.md++; renderDbg(); }, true);
+  document.addEventListener('mousemove',     () => { C.mm++; renderDbg(); }, { capture: true, passive: true });
+  renderDbg();
 
-  canvas.addEventListener('pointerdown', e => {
-    e.preventDefault();
-    dbgMoves = 0; dbg(pinfo('DOWN', e));
-    // setPointerCapture는 안드로이드 크롬/삼성인터넷에서 'S펜'의 pointermove를 끊는
-    // 버그가 있어 호출하지 않음(터치는 암묵적 캡처라 캡처 없이도 정상 동작).
-    moveCursor(e);
-    pointerDown(e);
-  });
-  canvas.addEventListener('pointermove', e => {
-    e.preventDefault();
-    dbgMoves++; if (dbgMoves % 2 === 0) dbg(pinfo('MOVE', e) + ' · n=' + dbgMoves + ' · 그리는중=' + isDrawing);
-    moveCursor(e);
-    pointerMove(e);
-  });
-  canvas.addEventListener('pointerup', e => { e.preventDefault(); dbg(pinfo('UP', e) + ' · 이동수=' + dbgMoves); pointerUp(e); });
-  canvas.addEventListener('pointercancel', e => { dbg('CANCEL!! (' + e.pointerType + ') — 이래서 안 그려질 수 있음'); pointerUp(null); });
+  // ── 그리기 입력(포인터 이벤트) ────────────────────────────
+  canvas.addEventListener('pointerdown', e => { e.preventDefault(); moveCursor(e); pointerDown(e); });
+  canvas.addEventListener('pointermove', e => { e.preventDefault(); moveCursor(e); pointerMove(e); });
+  canvas.addEventListener('pointerup',   e => { e.preventDefault(); pointerUp(e); });
+  canvas.addEventListener('pointercancel', () => pointerUp(null));
   canvas.addEventListener('pointerleave', () => { if (!isDrawing) cursor.style.display = 'none'; });
 
   // ── 메뉴: 새 도화지 ───────────────────────────────────────
