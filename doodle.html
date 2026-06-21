@@ -458,8 +458,8 @@
   canvas.addEventListener('pointerdown', e => {
     e.preventDefault();
     dbgMoves = 0; dbg(pinfo('DOWN', e));
-    // 드래그가 캔버스 밖으로 나가도 같은 포인터를 계속 추적
-    if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (_) {} }
+    // setPointerCapture는 안드로이드 크롬/삼성인터넷에서 'S펜'의 pointermove를 끊는
+    // 버그가 있어 호출하지 않음(터치는 암묵적 캡처라 캡처 없이도 정상 동작).
     moveCursor(e);
     pointerDown(e);
   });
