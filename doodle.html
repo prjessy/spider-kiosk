@@ -174,6 +174,14 @@
 
   input[type="file"] { display: none; }
 
+  /* 펜 입력 진단(임시) — 어떤 입력이 들어오는지 화면에 표시 */
+  #dbg {
+    position: fixed; left: 6px; bottom: 6px; z-index: 1000;
+    font: 12px/1.45 monospace; color: #6f6;
+    background: rgba(0,0,0,0.7); padding: 5px 9px; border-radius: 6px;
+    pointer-events: none; white-space: pre; max-width: 92vw;
+  }
+
   /* 좁은 화면(핸드폰): 라벨을 숨기고 아이콘만 남겨 모든 버튼이 한 줄에 들어감.
      보조 기능(전체화면·툴바 숨기기)은 [옵션] 패널로 빠져 있어 상단이 더 단순함 */
   @media (max-width: 760px) {
@@ -235,6 +243,7 @@
 
 <div id="cursor"></div>
 <div id="hint">드래그하면 거미줄 낙서가 그려집니다</div>
+<div id="dbg">펜 진단: 화면(흰 종이)에 펜을 대보세요…</div>
 <input type="file" id="fileInput" accept="image/*">
 
 <script>
@@ -440,8 +449,15 @@
     cursor.style.left = e.clientX + 'px';
     cursor.style.top = e.clientY + 'px';
   }
+  // 임시 진단: 어떤 포인터 입력이 들어오는지 화면 좌하단에 표시
+  const dbgEl = document.getElementById('dbg');
+  let dbgMoves = 0;
+  function dbg(t) { if (dbgEl) dbgEl.textContent = t; }
+  function pinfo(tag, e) { return tag + ' · ' + e.pointerType + ' · p=' + (e.pressure != null ? e.pressure.toFixed(2) : '?') + ' · btn=' + e.buttons; }
+
   canvas.addEventListener('pointerdown', e => {
     e.preventDefault();
+    dbgMoves = 0; dbg(pinfo('DOWN', e));
     // 드래그가 캔버스 밖으로 나가도 같은 포인터를 계속 추적
     if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (_) {} }
     moveCursor(e);
@@ -449,11 +465,12 @@
   });
   canvas.addEventListener('pointermove', e => {
     e.preventDefault();
+    dbgMoves++; if (dbgMoves % 2 === 0) dbg(pinfo('MOVE', e) + ' · n=' + dbgMoves + ' · 그리는중=' + isDrawing);
     moveCursor(e);
     pointerMove(e);
   });
-  canvas.addEventListener('pointerup', e => { e.preventDefault(); pointerUp(e); });
-  canvas.addEventListener('pointercancel', () => pointerUp(null));
+  canvas.addEventListener('pointerup', e => { e.preventDefault(); dbg(pinfo('UP', e) + ' · 이동수=' + dbgMoves); pointerUp(e); });
+  canvas.addEventListener('pointercancel', e => { dbg('CANCEL!! (' + e.pointerType + ') — 이래서 안 그려질 수 있음'); pointerUp(null); });
   canvas.addEventListener('pointerleave', () => { if (!isDrawing) cursor.style.display = 'none'; });
 
   // ── 메뉴: 새 도화지 ───────────────────────────────────────
