@@ -374,8 +374,12 @@
       : 1;
   }
 
+  // 임시 진단 카운터: 캔버스 그리기 코드가 실제로 도달/실행되는지 추적
+  const DBG = { cd: 0, cm: 0, drew: 0 };
+
   // ── 메인 선 ───────────────────────────────────────────────
   function drawLine(x1, y1, x2, y2) {
+    DBG.drew++;
     ctx.save();
     ctx.strokeStyle = hexToRgba(cfg.mainC, 0.8);
     ctx.lineWidth = cfg.mainW * penFactor;
@@ -461,8 +465,8 @@
       '펜 진단 — 펜으로 그어보세요\n' +
       'pointerdown   ' + fmt(C.pd) + '\n' +
       'pointermove   ' + fmt(C.pm) + '\n' +
-      'pointercancel ' + C.pc + '\n' +
-      'touch s/m ' + C.ts + '/' + C.tm + '  ·  mouse d/m ' + C.md + '/' + C.mm;
+      'touch s/m ' + C.ts + '/' + C.tm + '  ·  mouse d/m ' + C.md + '/' + C.mm + '\n' +
+      '캔버스 down/move ' + DBG.cd + '/' + DBG.cm + '  ·  선그림 ' + DBG.drew + '  ·  그리는중 ' + isDrawing + '  ·  지우개 ' + cfg.erase;
   }
   document.addEventListener('pointerdown',   e => { inc(C.pd, e.pointerType); renderDbg(); }, true);
   document.addEventListener('pointermove',   e => { inc(C.pm, e.pointerType); renderDbg(); }, { capture: true, passive: true });
@@ -474,9 +478,9 @@
   renderDbg();
 
   // ── 그리기 입력(포인터 이벤트) ────────────────────────────
-  canvas.addEventListener('pointerdown', e => { e.preventDefault(); moveCursor(e); pointerDown(e); });
-  canvas.addEventListener('pointermove', e => { e.preventDefault(); moveCursor(e); pointerMove(e); });
-  canvas.addEventListener('pointerup',   e => { e.preventDefault(); pointerUp(e); });
+  canvas.addEventListener('pointerdown', e => { e.preventDefault(); DBG.cd++; moveCursor(e); pointerDown(e); renderDbg(); });
+  canvas.addEventListener('pointermove', e => { e.preventDefault(); DBG.cm++; moveCursor(e); pointerMove(e); renderDbg(); });
+  canvas.addEventListener('pointerup',   e => { e.preventDefault(); pointerUp(e); renderDbg(); });
   canvas.addEventListener('pointercancel', () => pointerUp(null));
   canvas.addEventListener('pointerleave', () => { if (!isDrawing) cursor.style.display = 'none'; });
 
