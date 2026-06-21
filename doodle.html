@@ -203,6 +203,7 @@
   <div class="group">
     <button id="btnUndo" title="실행취소 (Ctrl+Z)"><span class="ic">↶</span><span class="lbl">실행취소</span></button>
     <button id="btnRedo" title="재실행 (Ctrl+Y)"><span class="ic">↷</span><span class="lbl">재실행</span></button>
+    <button id="btnPen" title="펜 (거미줄 낙서를 그림 — 기본)"><span class="ic">✏️</span><span class="lbl">펜</span></button>
     <button id="btnEraser" title="지우개 (그린 거미줄을 지움)"><span class="ic">🧽</span><span class="lbl">지우개</span></button>
   </div>
   <div class="group">
@@ -465,8 +466,7 @@
     cfg.eraseW = Math.max(24, Math.round(Math.max(W, H) * 0.02));
     $('eraseW').value = cfg.eraseW;
     $('eraseWVal').textContent = cfg.eraseW;
-    cfg.erase = false;
-    $('btnEraser').classList.remove('on');
+    setEraseMode(false);   // 새 도화지는 펜 모드로 시작
     undoStack.length = 0;
     redoStack.length = 0;
     dirty = false;
@@ -569,10 +569,15 @@
   $('btnClose').addEventListener('click', closeApp);
   $('btnUndo').addEventListener('click', undo);
   $('btnRedo').addEventListener('click', redo);
-  $('btnEraser').addEventListener('click', () => {
-    cfg.erase = !cfg.erase;
-    $('btnEraser').classList.toggle('on', cfg.erase);
-  });
+  // 펜 ↔ 지우개: 둘 중 하나만 켜짐. 켜진 버튼이 강조(.on)되어 현재 모드가 한눈에 보임
+  function setEraseMode(on) {
+    cfg.erase = on;
+    $('btnEraser').classList.toggle('on', on);
+    $('btnPen').classList.toggle('on', !on);
+  }
+  $('btnPen').addEventListener('click', () => setEraseMode(false));
+  $('btnEraser').addEventListener('click', () => setEraseMode(true));
+  setEraseMode(false);   // 시작은 펜(그리기) 모드
   // 전체화면: 표준 + webkit(구형 안드로이드/사파리) 폴백,
   // 둘 다 없는 iOS 사파리에서는 툴바를 숨겨 유사 전체화면으로 동작
   const docEl = document.documentElement;
