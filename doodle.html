@@ -355,21 +355,11 @@
     ctx.restore();
   }
 
-  // ── 필압(펜 압력) → 굵기 계수 ─────────────────────────────
-  // 펜이고 압력값이 있으면 1x(가볍게)~3.5x(꾹)로 '더 굵어지는' 변화만 줌.
-  // → 손가락(1x)보다 절대 가늘어지지 않으므로 항상 보임. 그 외(마우스·손가락)는 1x.
-  let penFactor = 1;
-  function setPen(e) {
-    penFactor = (e && e.pointerType === 'pen' && e.pressure > 0)
-      ? 1 + e.pressure * 2.5
-      : 1;
-  }
-
   // ── 메인 선 ───────────────────────────────────────────────
   function drawLine(x1, y1, x2, y2) {
     ctx.save();
     ctx.strokeStyle = hexToRgba(cfg.mainC, 0.8);
-    ctx.lineWidth = cfg.mainW * penFactor;
+    ctx.lineWidth = cfg.mainW;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(x1, y1);
@@ -403,7 +393,6 @@
   // ── 입력 이벤트 ───────────────────────────────────────────
   function pointerDown(e) {
     const p = getPos(e);
-    setPen(e);
     snapshot();
     oldx = p.x; oldy = p.y;
     isDrawing = true;
@@ -414,7 +403,6 @@
   function pointerMove(e) {
     if (!isDrawing) return;
     const p = getPos(e);
-    setPen(e);
     if (cfg.erase) {
       eraseLine(oldx, oldy, p.x, p.y);
     } else {
